@@ -148,7 +148,7 @@ export default function Subnets() {
                   <Link to={openTo} className="link">{grp ? s.cidr : s.name}</Link>
                   {subN > 0 && (grp
                     ? <div className="muted small">{subN} {subnetsWord(subN)}</div>
-                    : <Link to={`/subnets?inside=${encodeURIComponent(s.cidr)}`} className="small" style={{ color: "var(--accent)" }}>{subN} {subnetsWord(subN)}</Link>)}
+                    : <div className="small"><Link to={`/subnets?inside=${encodeURIComponent(s.cidr)}`} style={{ color: "var(--accent)" }}>{subN} {subnetsWord(subN)}</Link></div>)}
                 </td>
                 <td className="mono"><Link to={openTo}>{s.cidr}</Link></td>
                 <td className="cell-descr muted" title={s.descr || ""}>{s.descr || ""}</td>
