@@ -1,0 +1,12 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy[asyncio]>=2.0.30
+aiosqlite>=0.20
+asyncpg>=0.29
+apscheduler>=3.10
+dnspython>=2.6
+PyJWT>=2.8
+python-multipart>=0.0.9
+pydantic-settings>=2.2
+ldap3>=2.9
+paramiko>=3.4

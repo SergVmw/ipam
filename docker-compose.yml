@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ipam
+      POSTGRES_PASSWORD: ipam
+      POSTGRES_DB: ipam
+    volumes:
+      - ipam_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ipam -d ipam"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ipam:ipam@db:5432/ipam
+      SECRET_KEY: change-me-in-production
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin
+      IPAM_DOMAIN: ipam.local        # CN/SAN самоподписанного сертификата (смените на свой домен/имя)
+      DOCS_DIR: /docs                # вложения Документации — в том (переживают пересборку)
+      # SSL_ENABLED: "0"             # "0" — отключить встроенный TLS (если стоит reverse-proxy)
+      # DNS_SERVERS: 10.0.0.2,10.0.0.3
+      # SEED_DEMO: "1"
+      # SCAN_TIMEOUT_MS: "500"
+      # PROBE_PORTS: "22,80,443,3389"
+    volumes:
+      - ipam_certs:/certs            # самоподписанный сертификат сохраняется между пересборками
+      - ipam_docs:/docs              # файлы Документации (вложения) — сохраняются между пересборками
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  ipam_pg:
+  ipam_certs:
+  ipam_docs:

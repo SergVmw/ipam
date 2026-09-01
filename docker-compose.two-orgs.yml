@@ -1,0 +1,88 @@
+# Два инстанса IPAM (две организации) в одном compose-проекте.
+# org1: порт 8000 (как было), org2: порт 8001.
+# Полная изоляция: у каждой организации своя БД, свои сертификаты, свой SECRET_KEY.
+#
+#   docker compose -f docker-compose.two-orgs.yml up -d --build
+#   org1: https://<host>:8000   (CN org1.local)
+#   org2: https://<host>:8001   (CN org2.local)
+
+services:
+  # ================= ОРГАНИЗАЦИЯ 1 =================
+  db1:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ipam
+      POSTGRES_PASSWORD: ipam
+      POSTGRES_DB: ipam
+    volumes:
+      - ipam1_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ipam -d ipam"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app1:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ipam:ipam@db1:5432/ipam
+      SECRET_KEY: change-me-org1-32+chars
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin
+      IPAM_DOMAIN: org1.local        # CN самоподписанного сертификата org1
+      DOCS_DIR: /docs                # вложения Документации — в том (переживают пересборку)
+      # SSL_ENABLED: "0"             # если стоит reverse-proxy
+    volumes:
+      - ipam1_certs:/certs
+      - ipam1_docs:/docs             # файлы Документации org1
+    depends_on:
+      db1:
+        condition: service_healthy
+
+  # ================= ОРГАНИЗАЦИЯ 2 =================
+  db2:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ipam
+      POSTGRES_PASSWORD: ipam2
+      POSTGRES_DB: ipam
+    volumes:
+      - ipam2_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ipam -d ipam"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app2:
+    build: .                       # тот же образ, кэш сборки переиспользуется
+    restart: unless-stopped
+    ports:
+      - "8001:8000"                # свой внешний порт
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ipam:ipam2@db2:5432/ipam
+      SECRET_KEY: change-me-org2-32+chars   # обязательно другой (разные JWT)
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: admin2                  # свой пароль админа
+      IPAM_DOMAIN: org2.local        # CN сертификата org2 (иначе имя не совпадёт)
+      DOCS_DIR: /docs                # вложения Документации — в том (переживают пересборку)
+      # SSL_ENABLED: "0"
+    volumes:
+      - ipam2_certs:/certs          # свой том сертификатов
+      - ipam2_docs:/docs            # файлы Документации org2
+    depends_on:
+      db2:
+        condition: service_healthy
+
+volumes:
+  ipam1_pg:
+  ipam1_certs:
+  ipam1_docs:
+  ipam2_pg:
+  ipam2_certs:
+  ipam2_docs:
