@@ -628,3 +628,7 @@ th.sortable.active .sort-ind { opacity: 1; color: var(--accent); }
 
 /* описание сети в таблице (одна строка, эллипсис; полный текст — в title) */
 .cell-descr { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* «N подсетей» на плитке /24 (вложенные подсети) */
+.tile-subnets { font-size: 11px; color: var(--accent); cursor: pointer; margin-left: 2px; white-space: nowrap; }
+.tile-subnets:hover { text-decoration: underline; }

@@ -20,7 +20,7 @@ from ..service import (
     finish_subnet_counts,
     ip_dict,
     last_scans,
-    materialize_ips,
+    resync_subnet_ips,
     subnet_dict,
     usage_counts,
 )
@@ -99,11 +99,9 @@ async def create_subnet(data: SubnetIn, db=Depends(get_db), user=Depends(require
         s.next_scan_at = utcnow() + timedelta(seconds=s.scan_interval_s or 3600)
     db.add(s)
     await db.flush()
-    from sqlalchemy import insert
-
-    rows = materialize_ips(s.id, s.cidr, s.gateway, s.dhcp_start, s.dhcp_end)
-    for i in range(0, len(rows), 5000):  # чанки — чтобы не плодить гигантские пакеты (postgres/asyncpg)
-        await db.execute(insert(Ip), rows[i:i + 5000])
+    # вложенность разрешена: IP унаследованы от родительской сети переезжают сюда,
+    # адреса, не покрытые подсетями, — материализуются
+    await resync_subnet_ips(db, s.id, s.cidr, s.gateway, s.dhcp_start, s.dhcp_end)
     audit(db, user, "subnet_create", s.name, {"cidr": s.cidr})
     await db.commit()
     await db.refresh(s)
@@ -181,6 +179,25 @@ async def delete_subnet(sid: int, db=Depends(get_db), user=Depends(require_role(
     s = await db.get(Subnet, sid)
     if not s:
         raise HTTPException(404, "Сеть не найдена")
+    # вложенность: адреса возвращаем ближайшей родительской сети (иначе пропадут по каскаду)
+    from ipaddress import ip_network as _ipn
+    from sqlalchemy import update as sa_update
+    parents = []
+    try:
+        me = _ipn(s.cidr)
+        for o in (await db.execute(select(Subnet.id, Subnet.cidr))).all():
+            if o.id == sid:
+                continue
+            try:
+                if me.subnet_of(_ipn(o.cidr)):
+                    parents.append((int(o.cidr.split("/")[1]), o.id))
+            except ValueError:
+                continue
+        if parents:
+            parents.sort(reverse=True)  # самая мелкая (наибольший префикс) — ближайшая
+            await db.execute(sa_update(Ip).where(Ip.subnet_id == sid).values(subnet_id=parents[0][1]))
+    except ValueError:
+        pass
     await db.execute(delete(Ip).where(Ip.subnet_id == sid))
     await db.execute(delete(IpEvent).where(IpEvent.subnet_id == sid))
     await db.execute(delete(UsageSnapshot).where(UsageSnapshot.subnet_id == sid))

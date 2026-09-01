@@ -3,9 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import type { Overview, OverviewItem } from "../types";
 import { isG24 } from "../types";
-import { G24_GROUP_MIN_PREFIX, buildG24Items, fmtShort, pctColor } from "../util";
+import { G24_GROUP_MIN_PREFIX, buildG24Items, fmtShort, pctColor, subnetsWord } from "../util";
 
-function Tile({ s }: { s: OverviewItem }) {
+function Tile({ s, subN }: { s: OverviewItem; subN: number }) {
   const nav = useNavigate();
   const occupied = s.used + s.reserved;
   const grp = isG24(s);
@@ -14,7 +14,13 @@ function Tile({ s }: { s: OverviewItem }) {
       title={grp ? s.subnets.map((x) => x.cidr).join("\n") : s.cidr}>
       <div className="tile-top">
         <span className="tile-name">{grp ? `${s.g24}/24` : s.name}</span>
-        {grp && <span className="badge tile-g24-badge">{s.subnets.length} сет.</span>}
+        {grp ? <span className="badge tile-g24-badge">{s.subnets.length} сет.</span>
+          : subN > 0 && (
+            <span className="tile-subnets" title="Сети, лежащие внутри"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); nav(`/subnets?inside=${encodeURIComponent(s.cidr)}`); }}>
+              {subN} {subnetsWord(subN)}
+            </span>
+          )}
         <span className="tile-pct" style={{ color: pctColor(s.pct) }}>{s.pct}%</span>
       </div>
       <div className="tile-cidr mono">
@@ -56,9 +62,10 @@ export default function Overview() {
     [data],
   );
 
-  // «осколки» маски мельче /24 объединяем по родителю /24: на Обзоре
-  // один блок /24 вместо кучи маленьких (2+ подсети внутри /24)
-  const allItems = useMemo<OverviewItem[]>(() => buildG24Items(rawSubnets), [rawSubnets]);
+  // вложенность (master + подсети): подсети, лежащие внутри другой сети, не
+  // выводятся поодиночке — у «родителя» под именем счётчик «N подсетей»;
+  // непокрытые мелкие (мельче /24) — блок /24
+  const { items: allItems, subCount } = useMemo(() => buildG24Items(rawSubnets), [rawSubnets]);
 
   // поиск по странице: имя, CIDR, gateway, VLAN, теги — без Ctrl+F
   const [q, setQ] = useState("");
@@ -97,7 +104,9 @@ export default function Overview() {
 
   const itemKey = (x: OverviewItem) => (isG24(x) ? "g" + x.g24 : "s" + x.id);
   const tiles = (list: OverviewItem[]) => (
-    <div className="tiles">{list.map((s) => <Tile key={itemKey(s)} s={s} />)}</div>
+    <div className="tiles">{list.map((s) => (
+      <Tile key={itemKey(s)} s={s} subN={isG24(s) ? 0 : (subCount.get(s.id) ?? 0)} />
+    ))}</div>
   );
 
   // секции: теги (по алфавиту) + «без тегов» (если есть)

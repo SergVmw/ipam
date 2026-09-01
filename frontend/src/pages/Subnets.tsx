@@ -5,7 +5,7 @@ import Modal from "../components/Modal";
 import { Th, useSort } from "../components/Sort";
 import type { OverviewItem, Subnet, Vlan } from "../types";
 import { isG24 } from "../types";
-import { buildG24Items, fmt, g24Parent, isInsideCidr, pctColor } from "../util";
+import { buildG24Items, fmt, g24Parent, isInsideCidr, pctColor, subnetsWord } from "../util";
 
 const emptyForm = {
   name: "", cidr: "", vlan_id: 0, gateway: "", dhcp_start: "", dhcp_end: "",
@@ -22,49 +22,46 @@ export default function Subnets() {
   const vlanFilter = sp.get("vlan");
   // ?g24=10.0.0.0 — перечень сетей внутри /24 (из блока /24 на Обзоре)
   const g24Filter = sp.get("g24");
+  // ?inside=10.0.0.0/24 — подсети конкретной сети (из «N подсетей»)
+  const insideFilter = sp.get("inside");
+  const listFilter = !!(g24Filter || insideFilter);
   const vlanName = vlans.find((v) => String(v.id) === vlanFilter)?.name;
   const [q, setQ] = useState("");
 
   const load = () =>
     Promise.all([
-      // для /24-группы грузим ВСЕ сети (без VLAN-фильтра) и фильтруем клиентом
-      api<Subnet[]>(`/subnets${vlanFilter && !g24Filter ? `?vlan_id=${vlanFilter}` : ""}`),
+      // для списка подсетей грузим ВСЕ сети (без VLAN-фильтра) и фильтруем клиентом
+      api<Subnet[]>(`/subnets${vlanFilter && !listFilter ? `?vlan_id=${vlanFilter}` : ""}`),
       api<Vlan[]>("/vlans"),
     ])
       .then(([s, v]) => { setItems(s); setVlans(v); })
       .catch((e) => setErr(e.message));
-  useEffect(() => { load(); }, [vlanFilter, g24Filter]);
+  useEffect(() => { load(); }, [vlanFilter, g24Filter, insideFilter]);
 
-  // /24-группа: только сети, чей /24-родитель совпадает
+  // фильтр списка: строго внутри «inside» / чей /24-родитель = g24
   const baseItems = useMemo(
-    () => (g24Filter ? items.filter((s) => g24Parent(s.cidr) === g24Filter) : items),
-    [items, g24Filter],
+    () => items.filter((s) =>
+      insideFilter ? isInsideCidr(s.cidr, insideFilter)
+        : g24Filter ? g24Parent(s.cidr) === g24Filter : true),
+    [items, g24Filter, insideFilter],
   );
-  const g24Sum = useMemo(() => {
-    if (!g24Filter) return null;
+  const listSum = useMemo(() => {
+    if (!listFilter) return null;
     return {
       count: baseItems.length,
       total: baseItems.reduce((a, s) => a + s.total, 0),
       used: baseItems.reduce((a, s) => a + s.used + s.reserved, 0),
     };
-  }, [g24Filter, baseItems]);
+  }, [listFilter, baseItems]);
 
-  // как на Обзоре: мелкие сети (мельче /24) — блок /24 (кроме страницы-списка /24)
-  const grouped = useMemo<OverviewItem[]>(
-    () => (g24Filter ? (baseItems as OverviewItem[]) : buildG24Items(baseItems)),
-    [baseItems, g24Filter],
-  );
-
-  // у обычных сетей: сколько сетей лежит ВНУТРИ этой (для «N подсетей» под именем)
-  const subCount = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const a of items) {
-      for (const b of items) {
-        if (a.id !== b.id && isInsideCidr(b.cidr, a.cidr)) m.set(a.id, (m.get(a.id) || 0) + 1);
-      }
-    }
-    return m;
-  }, [items]);
+  // как на Обзоре: вложенные не поодиночке, мелкие непокрытые — блок /24
+  // (на страницах-списках — без группировки, всё по строкам)
+  const built = useMemo(() => {
+    if (listFilter) return { items: baseItems as OverviewItem[], subCount: new Map<number, number>() };
+    return buildG24Items(baseItems);
+  }, [baseItems, listFilter]);
+  const grouped = built.items;
+  const subCount = built.subCount;
 
   // живой поиск: имя, CIDR, VLAN, теги
   const filtered = useMemo(() => {
@@ -96,10 +93,10 @@ export default function Subnets() {
     <div className="page">
       <div className="page-head">
         <h1>
-          {g24Filter ? `Сети в ${g24Filter}/24` : "Сети"}{" "}
-          {g24Filter && (
+          {insideFilter ? `Подсети ${insideFilter}` : g24Filter ? `Сети в ${g24Filter}/24` : "Сети"}{" "}
+          {listFilter && (
             <span className="badge" style={{ marginLeft: 8 }}>
-              {g24Sum?.count ?? 0} подсетей
+              {listSum?.count ?? 0} {subnetsWord(listSum?.count ?? 0)}
               <a style={{ marginLeft: 6, cursor: "pointer" }} onClick={() => nav("/subnets")}>✕</a>
             </span>
           )}
@@ -112,9 +109,11 @@ export default function Subnets() {
         </h1>
         <button className="btn primary" onClick={() => setShowAdd(true)}>+ Добавить сеть</button>
       </div>
-      {g24Filter && g24Sum && (
+      {listFilter && listSum && (
         <div className="muted small" style={{ margin: "-6px 0 10px" }}>
-          объединённый блок /24: занято {g24Sum.used} из {g24Sum.total} адресов · клик по сети — как обычно
+          {insideFilter
+            ? `внутри ${insideFilter}: занято ${listSum.used} из ${listSum.total} адресов`
+            : `объединённый блок /24: занято ${listSum.used} из ${listSum.total} адресов`} · клик по сети — как обычно
         </div>
       )}
       {err && <div className="error">{err}</div>}
@@ -147,7 +146,9 @@ export default function Subnets() {
               <tr key={itemKey(s)}>
                 <td>
                   <Link to={openTo} className="link">{grp ? s.cidr : s.name}</Link>
-                  {subN > 0 && <div className="muted small">{subN} подсетей</div>}
+                  {subN > 0 && (grp
+                    ? <div className="muted small">{subN} {subnetsWord(subN)}</div>
+                    : <Link to={`/subnets?inside=${encodeURIComponent(s.cidr)}`} className="small" style={{ color: "var(--accent)" }}>{subN} {subnetsWord(subN)}</Link>)}
                 </td>
                 <td className="mono"><Link to={openTo}>{s.cidr}</Link></td>
                 <td className="cell-descr muted" title={s.descr || ""}>{s.descr || ""}</td>
@@ -188,7 +189,7 @@ export default function Subnets() {
               </tr>
               );
             })}
-            {sorted.length === 0 && <tr><td colSpan={8} className="muted">{g24Filter ? "в этом /24 сетей нет" : items.length === 0 ? "сетей пока нет — добавьте первую" : "Ничего не найдено"}</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={8} className="muted">{listFilter ? "подсетей нет" : items.length === 0 ? "сетей пока нет — добавьте первую" : "Ничего не найдено"}</td></tr>}
           </tbody>
         </table>
       </div>

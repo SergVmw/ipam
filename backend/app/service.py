@@ -30,14 +30,64 @@ def check_cidr_in_net(cidr: str, ip: str | None) -> str | None:
 
 
 async def check_overlap(db: AsyncSession, cidr: str) -> None:
+    """Запрет: дубли и ЧАСТИЧНЫЕ пересечения.
+    Вложение разрешено (подсеть внутри master-сети и наоборот) — как в phpIPAM."""
     new_net = ip_network(cidr)
     existing = (await db.execute(select(Subnet.cidr))).scalars().all()
     for other in existing:
         try:
-            if new_net.overlaps(ip_network(other)):
-                raise HTTPException(status_code=409, detail=f"Сеть пересекается с {other}")
+            o = ip_network(other)
         except ValueError:
             continue
+        if new_net == o:
+            raise HTTPException(status_code=409, detail=f"Сеть {other} уже существует")
+        if new_net.subnet_of(o) or o.subnet_of(new_net):
+            continue  # вложение: master/подсеть — нормально
+        if new_net.overlaps(o):
+            raise HTTPException(status_code=409, detail=f"Сеть частично пересекается с {other}")
+
+
+async def resync_subnet_ips(db: AsyncSession, subnet_id: int, cidr: str,
+                            gateway: str | None = None,
+                            dhcp_start: str | None = None,
+                            dhcp_end: str | None = None) -> None:
+    """IP-синхронизация новой сети при допустимой вложенности (Ip.ip уникален
+    глобально — адрес живёт ровно в одной сети):
+    1) строки, «наследованные» от строгих родительских сетей (крупнее, содержат
+       эту) — перенести в эту сеть;
+    2) адреса, у которых строки ещё нет (не покрыты подсетями) — материализовать.
+    Порядок создания не важен: /24→/29 и /29→/24 дают одинаковый результат."""
+    from sqlalchemy import insert, update as sa_update
+    net = ip_network(cidr)
+    lo, hi = int(net.network_address), int(net.broadcast_address)
+    parent_ids = []
+    for o in (await db.execute(select(Subnet.id, Subnet.cidr))).all():
+        if o.id == subnet_id:
+            continue
+        try:
+            if net.subnet_of(ip_network(o.cidr)):
+                parent_ids.append(o.id)
+        except ValueError:
+            continue
+    if parent_ids:
+        # переносим ТОЛЬКО «хосты» этой сети (net.hosts() — ровно те адреса,
+        # что материализует у автономной сети) — тогда вложенная сеть выглядит
+        # так же, как автономная. network/broadcast остаются в родителе.
+        host_ints = [int(a) for a in net.hosts()]
+        for i in range(0, len(host_ints), 5000):
+            chunk = host_ints[i:i + 5000]
+            await db.execute(
+                sa_update(Ip)
+                .where(Ip.subnet_id.in_(parent_ids), Ip.ip_int.in_(chunk))
+                .values(subnet_id=subnet_id)
+            )
+    existing = set((await db.execute(
+        select(Ip.ip_int).where(Ip.ip_int >= lo, Ip.ip_int <= hi)
+    )).scalars().all())
+    rows = materialize_ips(subnet_id, cidr, gateway, dhcp_start, dhcp_end)
+    missing = [r for r in rows if r["ip_int"] not in existing]
+    for i in range(0, len(missing), 5000):
+        await db.execute(insert(Ip), missing[i:i + 5000])
 
 
 def materialize_ips(subnet_id: int, cidr: str, gateway: str | None, dhcp_start: str | None, dhcp_end: str | None) -> list[dict]:

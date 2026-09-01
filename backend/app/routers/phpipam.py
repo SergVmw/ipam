@@ -288,20 +288,26 @@ async def _run_import(root: str, data: PhpIPamIn, do_apply: bool,
             else:
                 rep["subnets_skip"] += 1
         else:
-            # пересечение с существующей/уже импортированной сетью — не создаём
-            # (в phpIPAM часты master-сети с вложенными подсетями и дубли)
+            # отношение к существующим/уже импортированным сетям:
+            # ВЛОЖЕНИЕ (master-сеть/подсети, как в phpIPAM) — нормально, создаём;
+            # дубль и ЧАСТИЧНОЕ пересечение — пропускаем
             clash = None
             for other in list(our_subnets) + claimed_cidrs:
                 try:
-                    if net.overlaps(ip_network(other)):
-                        clash = other
-                        break
+                    o = ip_network(other)
                 except ValueError:
-                    pass
+                    continue
+                if net == o:
+                    clash = f"{cidr} — дубль (уже есть в ядре) — не создаётся"
+                    break
+                if net.subnet_of(o) or o.subnet_of(net):
+                    continue  # вложение: master/подсеть
+                if net.overlaps(o):
+                    clash = f"{cidr} частично пересекается с {other} — не создаётся"
+                    break
             if clash:
                 rep["subnets_overlap_skip"] += 1
-                issue(f"{cidr} пересекается с {clash} — не создаётся "
-                      f"(в phpIPAM, вероятно, master-сеть/вложенные или дубль)")
+                issue(clash)
             else:
                 rep["subnets_new"] += 1
                 claimed_cidrs.append(cidr)
@@ -309,14 +315,11 @@ async def _run_import(root: str, data: PhpIPamIn, do_apply: bool,
                     s = Subnet(cidr=cidr, name=name, vlan_id=vlan_id, descr=descr or cidr)
                     db.add(s)
                     await db.flush()
-                    # материализуем ПОЛНУЮ таблицу IP (как при создании сети в UI) —
-                    # иначе импортированная сеть «знает» только импортированные IP
-                    # и показывает 100% занятости
-                    from sqlalchemy import insert
-                    from ..service import materialize_ips
-                    rows = materialize_ips(s.id, s.cidr, None, None, None)
-                    for i in range(0, len(rows), 5000):
-                        await db.execute(insert(Ip), rows[i:i + 5000])
+                    # IP: унаследованные от родительской сети переезжают сюда,
+                    # отсутствующие — материализуем (иначе сеть «знает» только
+                    # импортированные IP и показывает 100% занятости)
+                    from ..service import resync_subnet_ips
+                    await resync_subnet_ips(db, s.id, s.cidr)
                     our_subnets[cidr] = s
 
     # кэш IP перечитываем ПОСЛЕ создания сетей — с учётом свежематериализованных строк

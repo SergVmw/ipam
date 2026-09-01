@@ -74,6 +74,11 @@ export function fibersWord(n: number): string {
   return plural(n, "волокно", "волокна", "волокон");
 }
 
+// «1 подсеть / 2 подсети / 5 подсетей»
+export function subnetsWord(n: number): string {
+  return plural(n, "подсеть", "подсети", "подсетей");
+}
+
 // === Группировка сетей по «родителю» /24 (объединение мелких сетей на Обзоре) ===
 // Маски, которые объединяются в блок /24: ОТ /30 (P2P-линии /30, /31, /32).
 // Сети /8…/29 показываются обычными плитками. Если нужно другое пороговое
@@ -142,15 +147,31 @@ export function isInsideCidr(innerCidr: string, outerCidr: string): boolean {
   return (ipToInt(iip) & mask) === (ipToInt(oop) & mask);
 }
 
+export interface G24Built {
+  items: OverviewItem[];         // что показывать: «головые» сети + блоки /24
+  subCount: Map<number, number>; // id сети -> сколько сетей лежит строго внутри неё
+}
+
 /**
- * Объединяет сети с маской ОТ G24_GROUP_MIN_PREFIX (по умолчанию /25…/32 —
- * всё мельче /24) по родителю /24. Блок /24 создаётся, если внутри /24 таких
- * сетей 2+ (тогда на Обзоре они не выводятся поодиночке).
- * Сети крупнее порога — всегда обычными плитками.
+ * Сводка для Обзора/«Сетей» при допустимой вложенности (master + подсети):
+ * - сеть, СТРОГО ВНУТРИ другой, — «покрыта»: сама по себе не выводится
+ *   (её видит «родитель» — под именем сети счётчик «N подсетей»);
+ * - непокрытые мелкие (маска ОТ G24_GROUP_MIN_PREFIX, /25…/32) — объединяются
+ *   по родителю /24 в блок (2+ подсети); одиночная — обычная плитка;
+ * - сети крупнее порога (/8…/24) — обычные плитки/строки.
  */
-export function buildG24Items(subnets: Subnet[]): OverviewItem[] {
-  const small = subnets.filter((s) => prefixOf(s.cidr) >= G24_GROUP_MIN_PREFIX);
-  const normal = subnets.filter((s) => prefixOf(s.cidr) < G24_GROUP_MIN_PREFIX);
+export function buildG24Items(subnets: Subnet[]): G24Built {
+  const subCount = new Map<number, number>();
+  for (const a of subnets) {
+    for (const b of subnets) {
+      if (a.id !== b.id && isInsideCidr(b.cidr, a.cidr)) subCount.set(a.id, (subCount.get(a.id) || 0) + 1);
+    }
+  }
+  const covered = (s: Subnet) => subnets.some((o) => o.id !== s.id && isInsideCidr(s.cidr, o.cidr));
+
+  const small = subnets.filter((s) => prefixOf(s.cidr) >= G24_GROUP_MIN_PREFIX && !covered(s));
+  const normal = subnets.filter((s) => prefixOf(s.cidr) < G24_GROUP_MIN_PREFIX && !covered(s));
+
   const byG24 = new Map<string, Subnet[]>();
   for (const s of small) {
     const g = g24Parent(s.cidr);
@@ -163,7 +184,7 @@ export function buildG24Items(subnets: Subnet[]): OverviewItem[] {
     if (members.length >= 2) { grouped.add(g); groups.push(makeG24Group(g, members)); }
   }
   const lone = small.filter((s) => !grouped.has(g24Parent(s.cidr)));
-  return [...normal, ...lone, ...groups];
+  return { items: [...normal, ...lone, ...groups], subCount };
 }
 
 export function fmtCapacity(l: { capacity: number | null; fibers: number | null }): string {
