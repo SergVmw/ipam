@@ -63,7 +63,10 @@ export default function Locations() {
           <tbody>
             {sorted.map((l) => (
               <tr key={l.id}>
-                <td>{l.name}</td>
+                <td>
+                  {l.name}
+                  {l.is_transit && <span className="tag tag-transit" title="промежуточная точка: линии связи могут идти через неё">промежуточная</span>}
+                </td>
                 <td className="muted">{l.address || "—"}</td>
                 <td className="mono">{l.lat != null && l.lng != null ? `${l.lat}, ${l.lng}` : <span className="muted">нет</span>}</td>
                 <td>{l.links_count ?? 0}</td>
@@ -104,6 +107,7 @@ function LocationModal({ location, onClose, onSaved }: { location: Location | nu
     address: location?.address ?? "",
     lat: location?.lat != null ? String(location.lat) : "",
     lng: location?.lng != null ? String(location.lng) : "",
+    is_transit: location?.is_transit ?? false,
     descr: location?.descr ?? "",
   });
   const [busy, setBusy] = useState(false);
@@ -122,6 +126,7 @@ function LocationModal({ location, onClose, onSaved }: { location: Location | nu
         address: form.address.trim() || null,
         lat: form.lat.trim() === "" ? null : Number(form.lat.replace(",", ".")),
         lng: form.lng.trim() === "" ? null : Number(form.lng.replace(",", ".")),
+        is_transit: form.is_transit,
         descr: form.descr.trim() || null,
       };
       if ((body.lat == null) !== (body.lng == null)) setErr("Координаты: нужны обе — широта и долгота");
@@ -160,6 +165,16 @@ function LocationModal({ location, onClose, onSaved }: { location: Location | nu
           onChange={(la, ln) => setForm((f) => ({ ...f, lat: String(la), lng: String(ln) }))}
         />
         <span className="muted small">клик по карте — точка и координаты выставляются автоматически</span>
+      </div>
+      <div className="kv"><span>Тип точки</span>
+        <label className="small">
+          <input type="checkbox" checked={form.is_transit} onChange={(e) => setForm((f) => ({ ...f, is_transit: e.target.checked }))} />{" "}
+          промежуточная точка
+        </label>
+        <span className="muted small">
+          такую точку можно использовать как ПРОМЕЖУТОЧНУЮ в линиях связи (трасса идёт через неё, длина вносится по участкам);
+          на карте линий она выделяется другим цветом
+        </span>
       </div>
       <div className="kv"><span>Описание</span>
         <input className="input" value={form.descr} onChange={(e) => setForm({ ...form, descr: e.target.value })} />

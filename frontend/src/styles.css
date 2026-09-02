@@ -215,6 +215,7 @@ h3 { margin: 0; font-weight: 600; }
 .input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 select.input { width: auto; min-width: 170px; cursor: pointer; }
 textarea.input { resize: vertical; }
+.input:disabled { opacity: 0.45; cursor: default; }
 .color { width: 36px; height: 26px; border: none; background: none; padding: 0; cursor: pointer; border-radius: 6px; }
 .inline { display: flex; gap: 8px; align-items: center; flex: 1; }
 .grid-search { max-width: 300px; margin-left: auto; }
@@ -357,6 +358,7 @@ textarea.input { resize: vertical; }
 .tag-conflict { background: rgba(239,68,68,0.14); color: var(--red); border-color: rgba(239,68,68,0.25); }
 .tag-ok { background: rgba(34,197,94,0.14); color: var(--green); border-color: rgba(34,197,94,0.25); }
 .tag-ldap { background: rgba(56,189,248,0.14); color: var(--accent); }
+.tag-transit { background: rgba(251,146,60,0.16); color: #fb923c; border-color: rgba(251,146,60,0.3); margin-left: 6px; }
 
 /* ---------- глобальный поиск (сайдбар) ---------- */
 .search-wrap { position: relative; margin-bottom: var(--sp-3); }
@@ -592,13 +594,16 @@ th.sortable.active .sort-ind { opacity: 1; color: var(--accent); }
 .fiber-line.hl { stroke: #fbbf24; stroke-width: 3; opacity: 1; }
 .fiber-line-hit { fill: none; stroke: transparent; stroke-width: 14; vector-effect: non-scaling-stroke; }
 .fiber-pt { fill: #38bdf8; stroke: #0a0f1c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.fiber-pt.transit { fill: #fb923c; }
 .fiber-lbl { fill: #cfe0f5; font-weight: 600; paint-order: stroke; stroke: #0a0f1c; }
+.fiber-lbl.transit { fill: #fdba74; }
 .fiber-map-zoom { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; }
 .fiber-map-legend { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 14px; background: rgba(10, 15, 28, 0.78); padding: 4px 10px; border-radius: 6px; font-size: 11px; color: var(--muted); }
 .fiber-legend-line { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
 .fiber-legend-line.active { border-color: #22c55e; }
 .fiber-legend-line.inactive { border-top-style: dashed; border-color: #64748b; }
 .fiber-legend-pt { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; margin-right: 4px; }
+.fiber-legend-pt.transit { background: #fb923c; }
 .fiber-map-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.7; pointer-events: none; }
 .fiber-map-tip { position: absolute; z-index: 5; min-width: 180px; max-width: 250px; background: rgba(13, 20, 36, 0.96); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; pointer-events: none; box-shadow: var(--shadow-1); }
 .fiber-map-tip b { font-size: 13px; }

@@ -67,8 +67,17 @@ export interface Location {
   address: string | null;
   lat: number | null;
   lng: number | null;
+  is_transit: boolean; // промежуточная точка (реле/пересадка) — на карте другим цветом
   descr: string | null;
   links_count?: number;
+}
+
+// Маршрут линии с промежуточными точками:
+// via — промежуточные местоположения по порядку (между точкой А и точкой Б);
+// segs — длина каждого участка, км: [А→v1, v1→v2, …, vk→B] (длина = len(via)+1); null = не введён
+export interface LinkRoute {
+  via: Location[];
+  segs: (number | null)[];
 }
 
 export interface FiberLink {
@@ -78,8 +87,12 @@ export interface FiberLink {
   b: Location;
   capacity: number | null;
   fibers: number | null;
-  length: number | null;
-  fiber_usage: { name: string; count: number; speed: number | null }[] | null;
+  length: number | null; // длина трассы, км (если нет промежуточных точек)
+  route: LinkRoute | null;
+  // speed_mode: "all" = «на все волокна» (все волокна суммарно), "pair" = «на пару волокон» (пара волокон),
+  // null/отсутствует = прочерки (----; скорость не установлена, на страницу не выводится)
+  // extra — дополнительное примечание по назначению (выводится после скорости)
+  fiber_usage: { name: string; count: number; speed: number | null; speed_mode?: "all" | "pair" | null; extra?: string | null }[] | null;
   is_active: boolean;
   descr: string | null;
 }

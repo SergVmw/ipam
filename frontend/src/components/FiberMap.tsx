@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LAND_PATHS } from "../data/world-land";
-import { fmtCapacity, fmtFiberUsage } from "../util";
+import { fmtCapacity, fmtFiberUsage, fmtRouteLen, fmtRouteSegs, routeAllPoints, routeSegs } from "../util";
 import type { FiberLink, Location } from "../types";
 
 // Equirectangular, «пространство градусов»: x = lng+180, y = 90-lat; мировой холст 360x180.
@@ -33,27 +33,46 @@ export default function FiberMap({
     () =>
       locations
         .filter((l) => l.lat != null && l.lng != null)
-        .map((l) => ({ id: l.id, name: l.name, x: px(l.lng!), y: py(l.lat!) })),
+        .map((l) => ({ id: l.id, name: l.name, x: px(l.lng!), y: py(l.lat!), transit: !!l.is_transit })),
     [locations],
   );
 
+  // линия как цепочка участков: А → v1 → … → vk → Б; каждый участок — лёгкая дуга.
+  // Если у любой точки маршрута нет координат — линия на карте не рисуется.
   const segs = useMemo(
     () =>
       links
-        .filter((l) => l.a.lat != null && l.a.lng != null && l.b.lat != null && b_ok(l))
         .map((l) => {
-          let ax = px(l.a.lng!), ay = py(l.a.lat!);
-          let bx = px(l.b.lng!), by = py(l.b.lat!);
-          // через антиподмеридиан — сдвигаем, чтобы дуга не обходила мир
-          if (bx - ax > 180) bx -= 360;
-          if (ax - bx > 180) bx += 360;
-          const mx = (ax + bx) / 2, my = (ay + by) / 2;
-          const dx = bx - ax, dy = by - ay;
-          const d = Math.hypot(dx, dy) || 1e-9;
-          const off = Math.min(d * 0.18, 25) * (l.id % 2 === 0 ? 1 : -1);
-          const cx = mx + (-dy / d) * off, cy = my + (dx / d) * off;
-          return { link: l, d: `M ${ax} ${ay} Q ${cx} ${cy} ${bx} ${by}`, ax, ay, bx, by };
-        }),
+          const all = routeAllPoints(l);
+          if (all.some((p) => p.lat == null || p.lng == null)) return null;
+          let prev: [number, number] | null = null;
+          let d = "";
+          let segIdx = 0;
+          for (const p of all) {
+            let x = px(p.lng!), y = py(p.lat!);
+            if (prev) {
+              // через антиподмеридиан — сдвигаем, чтобы дуга не обходила мир
+              if (x - prev[0] > 180) x -= 360;
+              if (prev[0] - x > 180) x += 360;
+            }
+            if (prev) {
+              const [ax, ay] = prev;
+              const mx = (ax + x) / 2, my = (ay + y) / 2;
+              const dx = x - ax, dy = y - ay;
+              const dist = Math.hypot(dx, dy) || 1e-9;
+              const multi = all.length > 2;
+              const sign = (l.id % 2 === 0 ? 1 : -1) * (segIdx % 2 === 0 ? 1 : -1);
+              const off = (multi ? Math.min(dist * 0.15, 15) : Math.min(dist * 0.18, 25)) * sign;
+              d += ` Q ${mx + (-dy / dist) * off} ${my + (dx / dist) * off} ${x} ${y}`;
+              segIdx++;
+            } else {
+              d = `M ${x} ${y}`;
+            }
+            prev = [x, y];
+          }
+          return { link: l, d };
+        })
+        .filter((s): s is { link: FiberLink; d: string } => s != null),
     [links],
   );
 
@@ -182,8 +201,8 @@ export default function FiberMap({
         ))}
         {pts.map((p) => (
           <g key={p.id}>
-            <circle cx={p.x} cy={p.y} r={rPt} className="fiber-pt" />
-            <text x={p.x + rPt * 1.6} y={p.y - rPt * 1.1} className="fiber-lbl" fontSize={fLabel} strokeWidth={fLabel * 0.3}>{p.name}</text>
+            <circle cx={p.x} cy={p.y} r={p.transit ? rPt * 1.25 : rPt} className={"fiber-pt" + (p.transit ? " transit" : "")} />
+            <text x={p.x + rPt * 1.6} y={p.y - rPt * 1.1} className={"fiber-lbl" + (p.transit ? " transit" : "")} fontSize={fLabel} strokeWidth={fLabel * 0.3}>{p.name}</text>
           </g>
         ))}
       </svg>
@@ -197,6 +216,7 @@ export default function FiberMap({
         <span><i className="fiber-legend-line active" /> активна</span>
         <span><i className="fiber-legend-line inactive" /> не активна</span>
         <span><i className="fiber-legend-pt" /> местоположение</span>
+        <span><i className="fiber-legend-pt transit" /> промежуточная точка</span>
       </div>
 
       {pts.length === 0 && (
@@ -207,20 +227,19 @@ export default function FiberMap({
       )}
 
       {tip && (
-        <div className="fiber-map-tip" style={{ left: Math.min(tip.x + 12, (r?.width ?? 400) - 230), top: tip.y + 12 }}>
+        <div className="fiber-map-tip" style={{ left: Math.min(tip.x + 12, (r?.width ?? 400) - 260), top: tip.y + 12 }}>
           <b>{tip.link.name}</b>
-          <div>{tip.link.a.name} → {tip.link.b.name}</div>
+          <div>{routeAllPoints(tip.link).map((p) => p.name).join(" → ")}</div>
           <div>{fmtCapacity(tip.link)}</div>
           {tip.link.fiber_usage && tip.link.fiber_usage.length > 0 && (
             <div className="muted">{fmtFiberUsage(tip.link.fiber_usage)}</div>
           )}
-          {tip.link.length != null && <div className="muted">Длина: {tip.link.length} км</div>}
+          <div className="muted">
+            Длина: {fmtRouteLen(tip.link)}
+            {fmtRouteSegs(tip.link) && <> <span title={routeSegs(tip.link).join(" + ")}>({fmtRouteSegs(tip.link)})</span></>}
+          </div>
         </div>
       )}
     </div>
   );
-}
-
-function b_ok(l: FiberLink) {
-  return l.b.lat != null && l.b.lng != null;
 }

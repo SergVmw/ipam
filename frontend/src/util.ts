@@ -1,4 +1,4 @@
-import type { G24Group, OverviewItem, Subnet } from "./types";
+import type { G24Group, LinkRoute, Location, OverviewItem, Subnet } from "./types";
 
 // Время в БД хранится в UTC (наивные ISO). UI отображает его со сдвигом из настроек.
 let tzOffsetMin = 0;
@@ -194,18 +194,73 @@ export function fmtCapacity(l: { capacity: number | null; fibers: number | null 
   return parts.join(" · ") || "—";
 }
 
-// назначение волокон: «LAN: 8 волокон · 10 Гбит/с» (скорость не выводится,
-// если не указана или 0)
-export function fmtFiberUsageItem(u: { name: string; count: number; speed?: number | null }): string {
+// скорость назначения: «на все волокна» — все волокна суммарно, «на пару волокон» — пара волокон;
+// прочерки ---- (null) — скорость не устанавливается и не выводится
+export const SPEED_MODES: { value: "" | "all" | "pair"; label: string }[] = [
+  { value: "", label: "----" },
+  { value: "all", label: "на все волокна" },
+  { value: "pair", label: "на пару волокон" },
+];
+
+// назначение волокон: «LAN: 8 волокон · 100 Гбит/с (на все волокна)» / «SAN: 8 волокон · 16 Гбит/с (на пару волокон)».
+// Скорость не выводится, если не указана (прочерки ----) или 0; extra — после скорости.
+export function fmtFiberUsageItem(u: { name: string; count: number; speed?: number | null; speed_mode?: "all" | "pair" | null; extra?: string | null }): string {
   let s = `${u.name}: ${u.count} ${fibersWord(u.count)}`;
-  if (u.speed != null && u.speed > 0) s += ` · ${u.speed} Гбит/с`;
+  if (u.speed != null && u.speed > 0) {
+    s += ` · ${u.speed} Гбит/с`;
+    if (u.speed_mode === "all") s += " (на все волокна)";
+    else if (u.speed_mode === "pair") s += " (на пару волокон)";
+  }
+  if (u.extra) s += ` · ${u.extra}`;
   return s;
 }
 
-// разбивка волокон по назначениям: «LAN: 8 волокон · 10 Гбит/с, SAN: 4 волокна · 4 Гбит/с»
-export function fmtFiberUsage(u: { name: string; count: number; speed?: number | null }[] | null | undefined): string {
+// разбивка волокон по назначениям: «LAN: 8 волокон · 100 Гбит/с (на все волокна), SAN: 8 волокон · 16 Гбит/с (на пару волокон)»
+export function fmtFiberUsage(u: { name: string; count: number; speed?: number | null; speed_mode?: "all" | "pair" | null; extra?: string | null }[] | null | undefined): string {
   if (!u || u.length === 0) return "";
   return u.map(fmtFiberUsageItem).join(", ");
+}
+
+// === Маршрут линии: точка А — промежуточные точки — точка Б ===
+
+// все точки маршрута по порядку: [A, v1, …, vk, B]
+export function routeAllPoints(l: { a: Location; b: Location; route: LinkRoute | null }): Location[] {
+  return [l.a, ...(l.route?.via ?? []), l.b];
+}
+
+// длины участков (км), по порядку, между соседними точками; без промежуточных — один участок
+export function routeSegs(l: { length: number | null; route: LinkRoute | null }): (number | null)[] {
+  if (l.route && l.route.segs.length) return l.route.segs;
+  return l.length != null ? [l.length] : [];
+}
+
+// суммарная длина трассы (сумма введённых участков); null — ничего не введено
+export function routeTotal(l: { length: number | null; route: LinkRoute | null }): number | null {
+  const s = routeSegs(l).filter((x): x is number => x != null);
+  return s.length ? s.reduce((a, b) => a + b, 0) : null;
+}
+
+// «430 км» / «—»
+export function fmtRouteLen(l: { length: number | null; route: LinkRoute | null }): string {
+  const t = routeTotal(l);
+  return t != null ? `${t} км` : "—";
+}
+
+// разбивка по участкам для подсказок: «120 + 310 км» (только если участков > 1)
+export function fmtRouteSegs(l: { length: number | null; route: LinkRoute | null }): string {
+  const s = routeSegs(l).filter((x): x is number => x != null);
+  if (s.length <= 1) return "";
+  return s.join(" + ") + " км";
+}
+
+// «Минск → Орша: 120 км; Орша → Гродно: 310 км» (для title-подсказок)
+export function fmtRouteSegsDetail(l: { a: Location; b: Location; length: number | null; route: LinkRoute | null }): string {
+  const pts = routeAllPoints(l);
+  const segs = routeSegs(l);
+  if (segs.length <= 1) return "";
+  return pts.slice(0, -1)
+    .map((p, i) => `${p.name} → ${pts[i + 1].name}: ${segs[i] != null ? segs[i] + " км" : "?"}`)
+    .join("; ");
 }
 
 // «последний ответ был: 5 ч назад / 2 дня назад / 3 мес. назад»

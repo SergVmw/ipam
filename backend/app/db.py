@@ -121,6 +121,21 @@ async def migrate_db() -> None:
                 if "length" not in flcols:
                     await conn.execute(text("alter table fiber_link add column length double precision"))
                     print("[migrate] fiber_link.length добавлена")
+                if "route" not in flcols:
+                    await conn.execute(text("alter table fiber_link add column route text"))
+                    print("[migrate] fiber_link.route добавлена (промежуточные точки)")
+            loc_exists = (await conn.execute(text(
+                "select 1 from information_schema.tables where table_name = 'location'"
+            ))).scalar()
+            if loc_exists:
+                loccols = {r[0] for r in (await conn.execute(text(
+                    "select column_name from information_schema.columns where table_name = 'location'"
+                ))).fetchall()}
+                if "is_transit" not in loccols:
+                    await conn.execute(text(
+                        "alter table location add column is_transit boolean default false not null"
+                    ))
+                    print("[migrate] location.is_transit добавлена (промежуточная точка)")
     elif settings.DATABASE_URL.startswith("sqlite"):
         async with engine.begin() as conn:
             cols = [r[1] for r in (await conn.execute(text("pragma table_info(subnet)"))).fetchall()]
@@ -198,6 +213,19 @@ async def migrate_db() -> None:
                 if "length" not in flcols:
                     await conn.execute(text("alter table fiber_link add column length float"))
                     print("[migrate] fiber_link.length добавлена (sqlite)")
+                if "route" not in flcols:
+                    await conn.execute(text("alter table fiber_link add column route text"))
+                    print("[migrate] fiber_link.route добавлена (sqlite, промежуточные точки)")
+            loc_exists = (await conn.execute(text(
+                "select 1 from sqlite_master where type='table' and name='location'"
+            ))).fetchone()
+            if loc_exists:
+                loccols = [r[1] for r in (await conn.execute(text("pragma table_info(location)"))).fetchall()]
+                if "is_transit" not in loccols:
+                    await conn.execute(text(
+                        "alter table location add column is_transit boolean default 0 not null"
+                    ))
+                    print("[migrate] location.is_transit добавлена (sqlite, промежуточная точка)")
 
 
 async def init_db() -> None:

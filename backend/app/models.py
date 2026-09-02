@@ -34,6 +34,7 @@ class Location(Base):
     address: Mapped[str | None] = mapped_column(String(255))
     lat: Mapped[float | None] = mapped_column(Float)  # градусы; None = нет координат
     lng: Mapped[float | None] = mapped_column(Float)
+    is_transit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # промежуточная точка (реле/пересадка), на карте — другим цветом
     descr: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -48,8 +49,9 @@ class FiberLink(Base):
     b_id: Mapped[int] = mapped_column(ForeignKey("location.id", ondelete="RESTRICT"), index=True, nullable=False)
     capacity: Mapped[float | None] = mapped_column(Float)  # Гбит/с (общая, необязательно)
     fibers: Mapped[int | None] = mapped_column(Integer)  # ёмкость в волокнах (кол-во оптических волокон)
-    length: Mapped[float | None] = mapped_column(Float)  # длина трассы, км
-    fiber_usage: Mapped[str | None] = mapped_column(Text)  # JSON: [{"name":"LAN","count":10}] — назначение вручную
+    length: Mapped[float | None] = mapped_column(Float)  # длина трассы, км (если нет промежуточных точек)
+    route: Mapped[str | None] = mapped_column(Text)  # JSON: {"via":[id,...], "segs":[км|null,...]} — промежуточные точки + длина каждого участка
+    fiber_usage: Mapped[str | None] = mapped_column(Text)  # JSON: [{"name":"LAN","count":10,"speed":10,"speed_mode":"all|pair"}] — назначение вручную
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     descr: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

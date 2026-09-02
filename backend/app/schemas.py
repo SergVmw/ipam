@@ -16,15 +16,32 @@ class LocationIn(BaseModel):
     address: str | None = None
     lat: float | None = Field(default=None, ge=-90, le=90)
     lng: float | None = Field(default=None, ge=-180, le=180)
+    is_transit: bool = False  # промежуточная точка (реле/пересадка)
     descr: str | None = None
 
 
 class FiberUsageIn(BaseModel):
     """Назначение волокон линии: название вводится вручную (LAN, SAN, …) — не предопределено.
-    speed — скорость/ёмкость назначения в Гбит/с; None или 0 → не выводится."""
+    speed — скорость/ёмкость назначения в Гбит/с; None или 0 → не выводится.
+    speed_mode — как трактуется скорость:
+      "all"  — «на все волокна»: все волокна назначения суммарно дают указанную скорость;
+      "pair" — «на пару волокон»: пара волокон даёт указанную скорость;
+      None/"" — прочерки (----): скорость не устанавливается, на страницу не выводится.
+    extra — дополнительное примечание по назначению (свободный текст, необязательно)."""
     name: str = Field(min_length=1, max_length=64)
     count: int = Field(ge=1)
     speed: float | None = Field(default=None, ge=0)
+    speed_mode: str | None = Field(default=None, pattern="^($|all|pair)$")
+    extra: str | None = Field(default=None, max_length=128)
+
+
+class RouteIn(BaseModel):
+    """Маршрут линии с промежуточными точками:
+    via  — id местоположений по порядку (реле/пересадка между точкой А и точкой Б);
+    segs — длина КАЖДОГО участка, км, по порядку: [А→v1, v1→v2, …, vk→B]
+           (длина = len(via)+1); null = участок не введён."""
+    via: list[int] = Field(default_factory=list)
+    segs: list[float | None] = Field(default_factory=list)
 
 
 class LinkIn(BaseModel):
@@ -33,8 +50,9 @@ class LinkIn(BaseModel):
     b_id: int
     capacity: float | None = Field(default=None, ge=0)  # Гбит/с (общая, необязательно)
     fibers: int | None = Field(default=None, ge=1)  # число волокон
-    length: float | None = Field(default=None, ge=0)  # длина трассы, км
-    fiber_usage: list[FiberUsageIn] | None = None  # напр. [{"name":"LAN","count":10,"speed":10}]
+    length: float | None = Field(default=None, ge=0)  # длина трассы, км (без промежуточных точек)
+    route: RouteIn | None = None  # промежуточные точки + длина участков от точки к точке
+    fiber_usage: list[FiberUsageIn] | None = None  # напр. [{"name":"LAN","count":10,"speed":10,"speed_mode":"all"}]
     is_active: bool = True
     descr: str | None = None
 

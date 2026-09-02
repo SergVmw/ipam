@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { fmtCapacity, fmtFiberUsage } from "../util";
+import { fmtCapacity, fmtFiberUsage, fmtRouteLen, fmtRouteSegs, routeAllPoints } from "../util";
 import type { FiberLink, Location } from "../types";
 
 function esc(s: string): string {
@@ -93,32 +93,40 @@ export default function OsmMap({
 
     for (const l of locations) {
       if (l.lat == null || l.lng == null) continue;
+      // промежуточная точка — другим цветом (оранжевая)
       L.circleMarker([l.lat, l.lng], {
-        radius: 6, weight: 1.5, color: "#0a0f1c", fillColor: "#38bdf8", fillOpacity: 1,
+        radius: l.is_transit ? 7 : 6, weight: 1.5, color: "#0a0f1c",
+        fillColor: l.is_transit ? "#fb923c" : "#38bdf8", fillOpacity: 1,
       })
-        .bindTooltip(`<b>${esc(l.name)}</b>${l.address ? `<br>${esc(l.address)}` : ""}`, { sticky: true })
+        .bindTooltip(
+          `<b>${esc(l.name)}</b>${l.address ? `<br>${esc(l.address)}` : ""}` +
+          (l.is_transit ? `<br><i>промежуточная точка</i>` : ""),
+          { sticky: true },
+        )
         .addTo(g);
     }
 
     for (const f of links) {
-      if (f.a.lat == null || f.a.lng == null || f.b.lat == null || f.b.lng == null) continue;
+      // маршрут: А → промежуточные → Б; без координат хотя бы одной точки — не рисуем
+      const all = routeAllPoints(f);
+      if (all.some((p) => p.lat == null || p.lng == null)) continue;
+      const coords: [number, number][] = all.map((p) => [p.lat!, p.lng!] as [number, number]);
       const hl = highlightId === f.id;
       // на светлых OSM-тайлах: активная — ЧЁРНАЯ (зелёный терялся),
       // не активная — тёмно-серый пунктир, выделенная — синяя
-      const line = L.polyline(
-        [[f.a.lat, f.a.lng], [f.b.lat, f.b.lng]],
-        {
-          color: hl ? "#2563eb" : f.is_active ? "#111111" : "#475569",
-          weight: hl ? 5 : f.is_active ? 4 : 3,
-          opacity: 0.9,
-          dashArray: f.is_active ? undefined : "8 6",
-        },
-      );
+      const line = L.polyline(coords, {
+        color: hl ? "#2563eb" : f.is_active ? "#111111" : "#475569",
+        weight: hl ? 5 : f.is_active ? 4 : 3,
+        opacity: 0.9,
+        dashArray: f.is_active ? undefined : "8 6",
+      });
       const usage = fmtFiberUsage(f.fiber_usage);
+      const routeLine = esc(all.map((p) => p.name).join(" &rarr; "));
+      const segsLine = fmtRouteSegs(f);
       line.bindTooltip(
-        `<b>${esc(f.name)}</b><br>${esc(f.a.name)} &rarr; ${esc(f.b.name)}<br>` +
+        `<b>${esc(f.name)}</b><br>${routeLine}<br>` +
         `${esc(fmtCapacity(f))}${usage ? `<br>${esc(usage)}` : ""}` +
-        (f.length != null ? `<br>Длина: ${f.length} км` : ""),
+        `<br>Длина: ${esc(fmtRouteLen(f))}${segsLine ? ` <i>(${esc(segsLine)})</i>` : ""}`,
         { sticky: true },
       );
       if (onLinkClick) line.on("click", () => onLinkClick(f.id));
