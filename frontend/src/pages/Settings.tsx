@@ -186,6 +186,18 @@ export default function Settings({ onMetaChanged }: { onMetaChanged?: () => void
       </div>
 
       <div className="card">
+        <div className="card-title">Агенты: интервал отчёта</div>
+        <div className="kv"><span>Отчёт не чаще, минут</span>
+          <input className="input narrow" type="number" min={1} max={1440} value={form.agent_report_interval_min ?? 15}
+            onChange={(e) => setForm({ ...form, agent_report_interval_min: Number(e.target.value) || 15 })} />
+          <span className="muted small">глобальный троттлинг для ВСЕХ агентов: повторный отчёт не чаще этого интервала
+            (cron агента — каждые 5 мин, дефолт 15 мин). Изменение прилетает на агентов на ближайшем цикле —
+            переустановка не нужна. «Принудительный опрос» из карточки агента снимает лимит.</span>
+        </div>
+        <div className="btn-row"><button className="btn primary" onClick={save}>Сохранить</button></div>
+      </div>
+
+      <div className="card">
         <div className="card-title">Часовой пояс</div>
         <div className="kv"><span>Сдвиг от UTC, минут</span>
           <input className="input narrow" type="number" step={30} min={-720} max={840} value={form.tz_offset_min}
@@ -681,7 +693,7 @@ function InstallModal({ agent, mode, onClose, onAgentsChanged }: {
       </div>
       {state?.state === "done" && state.steps.length > 0 && (
         allOk
-          ? <div className="install-done">Установка завершена успешно. Агент будет присылать отчёт каждые 5 минут.</div>
+          ? <div className="install-done">Установка завершена успешно. Агент запускается каждые 5 минут (cron); интервал отчёта — из настроек ядра («Агенты: интервал отчёта», дефолт 15 мин). Для немедленного отчёта — «Принудительный опрос».</div>
           : <div className="install-warn">Установка завершилась с ошибками — смотрите шаги. Почините и нажмите «установить» ещё раз.</div>
       )}
     </Modal>
@@ -753,6 +765,7 @@ function AgentModal({ agent, subnets, onClose, onSaved, onErr }: {
   const [sshUser, setSshUser] = useState(agent?.ssh_user ?? "");
   const [sshPass, setSshPass] = useState("");
   const [pollFile, setPollFile] = useState(agent?.poll_file ?? "");
+  const [reportInterval, setReportInterval] = useState(agent?.report_interval_min ? String(agent.report_interval_min) : "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -769,6 +782,7 @@ function AgentModal({ agent, subnets, onClose, onSaved, onErr }: {
         ssh_user: sshUser || null,
         ssh_password: sshPass || undefined,
         poll_file: pollFile || null,
+        report_interval_min: reportInterval.trim() === "" ? 0 : Number(reportInterval),  // 0 = глобальная настройка
       };
       if (agent) {
         onSaved(await api<AgentOut>(`/agents/${agent.id}`, {
@@ -840,9 +854,15 @@ function AgentModal({ agent, subnets, onClose, onSaved, onErr }: {
           placeholder="/var/lib/ipam_agent/force_poll" onChange={(e) => setPollFile(e.target.value)} />
         <span className="muted small">«Принудительный опрос» трогает этот файл на агенте по SSH</span>
       </div>
+      <div className="kv"><span>Интервал отчёта, мин</span>
+        <input className="input narrow" type="number" min={0} max={1440} value={reportInterval}
+          placeholder="0 = глобальная" onChange={(e) => setReportInterval(e.target.value)} />
+        <span className="muted small">0 или пусто = использовать глобальную настройку
+          (Настройки → «Агенты: интервал отчёта»); здесь — индивидуальный интервал только для этого агента</span>
+      </div>
       <div className="muted small" style={{ margin: "0 0 10px" }}>
         Пользователю нужны root-права (установка пакетов, cron, /opt). Кнопка «установить» в таблице:
-        проверка ОС, python3/nmap/iproute2/cron, интернет-репозиториев, установка недостающего, деплой скрипта, cron и тест.
+        проверка ОС, curl/nmap/iproute2/cron, интернет-репозиториев, установка недостающего, деплой скрипта, cron и тест.
       </div>
       <div className="btn-row">
         <button className="btn primary" onClick={save} disabled={busy}>{busy ? "…" : "Сохранить"}</button>

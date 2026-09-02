@@ -1,7 +1,8 @@
 #!/bin/sh
 # IPAM-агент: отчёт о живых хостах в ядро (cron — рекомендуется каждые 5 минут;
-# скрипт сам троттлится: повторный отчёт не чаще 30 минут, если нет принудительного
-# опроса из ядра).
+# скрипт сам троттлится: повторный отчёт не чаще заданного в ядре интервала —
+# Настройки -> «Агенты: интервал отчёта», дефолт 15 минут; принудительный
+# опрос из ядра снимает лимит).
 #
 # POSIX sh — работает в bash/ash/dash (включая busybox на Alpine).
 # Зависимости: curl + (nmap для активного обхода и/или iproute2 для ARP-таблицы).
@@ -125,20 +126,29 @@ case "$IPAM_URL" in
 esac
 
 # --- конфиг с ядра: изменения настроек агента в ядре автоматически прилетают сюда
+# (сети, poll_file, интервал отчёта — Настройки ядра -> «Агенты: интервал отчёта»)
 CFG_NETS=""
 CFG_POLL_FILE=""
+CFG_INTERVAL=""
 CFG_JSON=$(curl -fsS $CURL_TLS -m "$TIMEOUT" -H "X-Agent-Key: $IPAM_AGENT_KEY" \
     "$IPAM_URL/api/agent/config" 2>/dev/null) || CFG_JSON=""
 if [ -n "$CFG_JSON" ]; then
     CFG_NETS=$(printf '%s' "$CFG_JSON" | sed -n 's/.*"networks"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
     CFG_POLL_FILE=$(printf '%s' "$CFG_JSON" | sed -n 's/.*"poll_file"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    CFG_INTERVAL=$(printf '%s' "$CFG_JSON" | sed -n 's/.*"report_interval_s"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
     printf '%s' "$CFG_JSON" > "$CONFIG_FILE" 2>/dev/null || true
-    log "конфиг получен с ядра (сети: ${CFG_NETS:-авто})"
+    log "конфиг получен с ядра (сети: ${CFG_NETS:-авто}, отчёт не чаще ${CFG_INTERVAL:-900} c)"
 fi
 # запасной конфиг из локального файла, если ядро недоступно
-if [ -z "$CFG_NETS" ] && [ -f "$CONFIG_FILE" ]; then
-    CFG_NETS=$(sed -n 's/.*"networks"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -1)
+if [ -f "$CONFIG_FILE" ]; then
+    [ -n "$CFG_NETS" ] || CFG_NETS=$(sed -n 's/.*"networks"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -1)
+    [ -n "$CFG_INTERVAL" ] || CFG_INTERVAL=$(sed -n 's/.*"report_interval_s"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG_FILE" | head -1)
 fi
+# троттлинг: из конфига ядра; валидность 60 c .. 7 сут; дефолт 15 минут
+THROTTLE="$CFG_INTERVAL"
+case "$THROTTLE" in (*[!0-9]*|'') THROTTLE=900 ;; esac
+[ "$THROTTLE" -lt 60 ] && THROTTLE=60
+[ "$THROTTLE" -gt 604800 ] && THROTTLE=604800
 
 # --- принудительный опрос: ядро через SSH трогает файл-триггер
 POLL_FILE="${CFG_POLL_FILE:-$POLL_FILE_DEFAULT}"
@@ -155,12 +165,13 @@ if [ -f "$POLL_FILE" ]; then
 fi
 
 # --- троттлинг: если свежий отчёт уже ушёл и нет принудительного триггера — цикл пропускаем
+# (интервал из настроек ядра, $THROTTLE секунд; принудительный опрос снимает лимит)
 if [ "$FORCED" = "0" ] && [ -f "$LAST_REPORT_FILE" ]; then
     NOW=$(date +%s)
     LT=$(cat "$LAST_REPORT_FILE" 2>/dev/null || echo 0)
     case "$LT" in (*[!0-9]*|'') LT=0 ;; esac
-    if [ "$LT" != "0" ] && [ $((NOW - LT)) -lt 1800 ]; then
-        log "пропуск: последний отчёт моложе 30 минут (принудительный опрос с ядра — «Принудительный опрос»)"
+    if [ "$LT" != "0" ] && [ $((NOW - LT)) -lt "$THROTTLE" ]; then
+        log "пропуск: последний отчёт моложе $((THROTTLE / 60)) мин (принудительный опрос с ядра — «Принудительный опрос»)"
         exit 0
     fi
 fi

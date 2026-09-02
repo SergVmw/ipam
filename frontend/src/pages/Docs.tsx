@@ -17,6 +17,11 @@ function renderMd(body: string): string {
       /href="(\/api\/docs\/files\/\d+)"(?![^>]*token=)/g,
       (_m, href) => `href="${href}?token=${encodeURIComponent(tok)}"`,
     );
+    // <img> тоже без Bearer-заголовка — токен в query
+    html = html.replace(
+      /src="(\/api\/docs\/files\/\d+)"(?![^>]*token=)/g,
+      (_m, src) => `src="${src}?token=${encodeURIComponent(tok)}"`,
+    );
   }
   return html;
 }
@@ -58,7 +63,9 @@ export default function Docs() {
   const [fileEditErr, setFileEditErr] = useState("");
   const [savingFile, setSavingFile] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const imgRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const [imgUploading, setImgUploading] = useState(false);
 
   const canWrite = me && (me.role === "admin" || me.role === "operator");
 
@@ -268,6 +275,57 @@ export default function Docs() {
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  // --- картинки: загрузить в документ и вставить ![](url) в позицию курсора ---
+  const pickImages = () => {
+    if (!page || imgUploading) return;
+    imgRef.current?.click();
+  };
+
+  const onImagesPicked = async (files: FileList | null) => {
+    if (!files || !files.length || !page) return;
+    setImgUploading(true);
+    setErr("");
+    try {
+      const inserted: { name: string; url: string }[] = [];
+      for (const f of Array.from(files)) {
+        const fd = new FormData();
+        fd.append("file", f);
+        const res = await fetch(`/api/docs/pages/${page.id}/files`, {
+          method: "POST",
+          headers: { Authorization: "Bearer " + (getToken() || "") },
+          body: fd,
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.detail || res.statusText);
+        }
+        const d = await res.json();
+        inserted.push({ name: d.name, url: d.url });
+      }
+      const md = inserted.map((u) => `\n![${u.name}](${u.url})\n`).join("");
+      const ta = taRef.current;
+      if (ta && editing) {
+        // вставка в позицию курсора (несколько картинок — одним блоком)
+        const s = ta.selectionStart ?? ta.value.length;
+        const e = ta.selectionEnd ?? s;
+        const next = ta.value.slice(0, s) + md + ta.value.slice(e);
+        setEditing({ ...editing, body: next });
+        requestAnimationFrame(() => {
+          ta.focus();
+          ta.setSelectionRange(s + md.length, s + md.length);
+        });
+      } else if (editing) {
+        setEditing({ ...editing, body: editing.body + md });
+      }
+      flash(`Картинка(и) вставлена в текст: ${inserted.length}`);
+      await Promise.all([load(), loadPage(page.id)]);
+    } catch (e: any) {
+      setErr(e.message);
+    }
+    setImgUploading(false);
+    if (imgRef.current) imgRef.current.value = "";
+  };
+
   // --- файлы: правка содержимого ---
   const openFileEdit = async (f: DocFileOut) => {
     setFileEdit({ file: f, content: "" });
@@ -304,12 +362,13 @@ export default function Docs() {
     } catch (e: any) { setErr(e.message); }
   };
 
-  const insertLink = (url: string, name: string) => {
+  const insertLink = (url: string, name: string, isImage = false) => {
     if (!page) return;
     const cur = editing ? editing.body : page.body;
-    setEditing({ title: page.title, body: cur + (cur.endsWith("\n") || cur === "" ? "" : "\n") + `[${name}](${url})\n` });
+    const md = isImage ? `![${name}](${url})` : `[${name}](${url})`;
+    setEditing({ title: page.title, body: cur + (cur.endsWith("\n") || cur === "" ? "" : "\n") + md + "\n" });
     setShowPreview(false);
-    flash("Ссылка вставлена в конец текста — сохраните документ");
+    flash(isImage ? "Картинка вставлена в конец текста — сохраните документ" : "Ссылка вставлена в конец текста — сохраните документ");
   };
 
   const sectionOf = page ? tree.find((s) => s.id === page.section_id)?.title : "";
@@ -447,6 +506,9 @@ export default function Docs() {
                         <button type="button" title="Код (инлайн)" onClick={() => applyMd("`", "`", "код")}>{`<>`}</button>
                         <button type="button" title="Блок кода" onClick={() => applyMd("\n```\n", "\n```\n", "код")}>{`{ }`}</button>
                         <button type="button" title="Ссылка" onClick={() => applyMd("[", "](https://)", "текст ссылки")}>🔗</button>
+                        <button type="button" title="Вставить картинку (загрузится в документ)" onClick={pickImages} disabled={imgUploading}>
+                          {imgUploading ? "…" : "🖼"}
+                        </button>
                         <span className="md-sep" />
                         <button type="button" title="Список" onClick={() => linePrefix("- ")}>•—</button>
                         <button type="button" title="Нумерованный список" onClick={() => linePrefix("1. ")}>1.—</button>
@@ -459,7 +521,7 @@ export default function Docs() {
                         className="input docs-body-input"
                         value={editing.body}
                         onChange={(e) => setEditing({ ...editing, body: e.target.value })}
-                        placeholder={"# Заголовок\n\nТекст в markdown: **жирный**, `код`, таблицы, списки, ссылки на файлы.\n\nФайлы — кнопкой «Загрузить» ниже, «ссылка в текст» добавит markdown-ссылку."}
+                        placeholder={"# Заголовок\n\nТекст в markdown: **жирный**, `код`, таблицы, списки, ссылки на файлы.\n\nКартинки — кнопкой 🖼 в тулбаре (загрузятся в документ и вставятся в текст)."}
                       />
                     </>
                   )}
@@ -485,6 +547,7 @@ export default function Docs() {
                     </>
                   )}
                 </div>
+                <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={(e) => onImagesPicked(e.target.files)} />
                 {page.files.length > 0 && (
                   <table className="table">
                     <thead>
@@ -497,7 +560,11 @@ export default function Docs() {
                           <td className="muted small">{fmtSize(f.size)}</td>
                           <td className="muted small">{f.uploaded_at ? fmt(f.uploaded_at) : "—"}</td>
                           <td className="actions-cell">
-                            {canWrite && <button className="btn ghost small" title="Вставить markdown-ссылку в документ" onClick={() => insertLink(f.url, f.name)}>ссылка в текст</button>}
+                            {canWrite && <button className="btn ghost small"
+                              title={(f.mime || "").startsWith("image/") ? "Вставить картинку в документ (отобразится на странице)" : "Вставить markdown-ссылку в документ"}
+                              onClick={() => insertLink(f.url, f.name, (f.mime || "").startsWith("image/"))}>
+                              {(f.mime || "").startsWith("image/") ? "картинка в текст" : "ссылка в текст"}
+                            </button>}
                             {f.editable && canWrite && (
                               <button className="btn ghost small" title="Править содержимое" onClick={() => openFileEdit(f)}>✎</button>
                             )}

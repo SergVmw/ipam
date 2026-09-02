@@ -122,6 +122,7 @@ class SettingsIn(BaseModel):
     show_no_dns: bool | None = None  # показывать секцию «IP без hostname — внести в DNS»
     search_mode: str | None = Field(default=None, pattern="^(page|live)$")  # поиск: страница / live-панель
     org_name: str | None = Field(default=None, max_length=128)  # название организации (title страницы)
+    agent_report_interval_min: int | None = Field(default=None, ge=1, le=1440)  # троттлинг отчётов агентов, минут
     mail_enabled: bool | None = None
     smtp_host: str | None = None
     smtp_port: int | None = Field(default=None, ge=1, le=65535)
@@ -151,6 +152,7 @@ class AgentIn(BaseModel):
     enabled: bool = True
     descr: str | None = None
     poll_file: str | None = Field(default=None, max_length=255)
+    report_interval_min: int | None = Field(default=None, ge=0, le=1440)  # 0/None = глобальная настройка
     ssh_host: str | None = Field(default=None, max_length=128)
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     ssh_user: str | None = Field(default=None, max_length=64)
@@ -163,6 +165,7 @@ class AgentUpdate(BaseModel):
     enabled: bool | None = None
     descr: str | None = None
     poll_file: str | None = Field(default=None, max_length=255)
+    report_interval_min: int | None = Field(default=None, ge=0, le=1440)  # 0 = сброс на глобальную
     ssh_host: str | None = Field(default=None, max_length=128)
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     ssh_user: str | None = Field(default=None, max_length=64)

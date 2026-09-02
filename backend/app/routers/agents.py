@@ -35,9 +35,10 @@ def _agent_dict(a: Agent) -> dict:
         "descr": a.descr,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "ssh_host": a.ssh_host, "ssh_port": a.ssh_port, "ssh_user": a.ssh_user,
-        "ssh_password": "****" if a.ssh_password else "",
-        "poll_file": a.poll_file or POLL_FILE_DEFAULT,
-        "last_install_at": a.last_install_at.isoformat() if a.last_install_at else None,
+    "ssh_password": "****" if a.ssh_password else "",
+    "poll_file": a.poll_file or POLL_FILE_DEFAULT,
+    "report_interval_min": a.report_interval_min,
+    "last_install_at": a.last_install_at.isoformat() if a.last_install_at else None,
         "install_log": (json.loads(a.install_log) if a.install_log else None),
     }
 
@@ -60,6 +61,7 @@ async def create_agent(data: AgentIn, db: AsyncSession = Depends(get_db), user=D
     a = Agent(name=data.name, key=secrets.token_hex(24),
               subnet_ids=",".join(str(i) for i in data.subnet_ids) if data.subnet_ids else None,
               enabled=data.enabled, descr=data.descr, created_at=utcnow(),
+              report_interval_min=data.report_interval_min or None,
               ssh_host=data.ssh_host, ssh_port=data.ssh_port,
               ssh_user=data.ssh_user, ssh_password=data.ssh_password,
               poll_file=data.poll_file or None)
@@ -110,6 +112,9 @@ async def update_agent(aid: int, data: AgentUpdate, db: AsyncSession = Depends(g
     if data.poll_file is not None:
         a.poll_file = data.poll_file or None
         changes["poll_file"] = a.poll_file
+    if data.report_interval_min is not None:
+        a.report_interval_min = data.report_interval_min or None  # 0 = глобальная настройка
+        changes["report_interval_min"] = a.report_interval_min
     if data.regenerate_key:
         a.key = secrets.token_hex(24)
         changes["key"] = "*** (пересоздан)"
@@ -182,11 +187,17 @@ async def agent_config(request: Request, db: AsyncSession = Depends(get_db)):
         ids = [int(x) for x in agent.subnet_ids.split(",") if x.strip()]
         rows = (await db.execute(select(Subnet.cidr).where(Subnet.id.in_(ids)))).scalars().all()
         networks = ",".join(rows)
+    from ..settings_store import get_all
+    st = await get_all(db)
+    # интервал: per-agent override (если задан), иначе глобальная настройка
+    global_min = max(1, min(1440, int(st.get("agent_report_interval_min") or 15)))
+    interval_min = max(1, min(1440, int(agent.report_interval_min or global_min)))
     return {
         "name": agent.name,
         "enabled": True,
         "networks": networks,
         "poll_file": agent.poll_file or POLL_FILE_DEFAULT,
+        "report_interval_s": interval_min * 60,
     }
 
 

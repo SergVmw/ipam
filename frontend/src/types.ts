@@ -181,6 +181,7 @@ export interface AppSettings {
   show_no_dns: boolean;
   search_mode: "page" | "live";
   org_name: string;
+  agent_report_interval_min?: number;
   ldap_enabled: boolean;
   ldap_url: string;
   ldap_base_dn: string;
@@ -224,6 +225,7 @@ export interface AgentOut {
   ssh_user: string | null;
   ssh_password: string;
   poll_file: string;
+  report_interval_min: number | null;
   last_install_at: string | null;
   install_log: { step: string; ok: boolean; detail: string }[] | null;
 }

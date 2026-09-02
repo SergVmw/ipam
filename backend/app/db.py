@@ -75,6 +75,7 @@ async def migrate_db() -> None:
                 ("poll_file", "alter table agent add column poll_file varchar(255)"),
                 ("last_install_at", "alter table agent add column last_install_at timestamp"),
                 ("install_log", "alter table agent add column install_log text"),
+                ("report_interval_min", "alter table agent add column report_interval_min integer"),
             ):
                 has = (await conn.execute(text(
                     "select 1 from information_schema.columns where table_name = 'agent' and column_name = :c"
@@ -147,6 +148,7 @@ async def migrate_db() -> None:
                 ("ssh_user", "varchar(64)"), ("ssh_password", "varchar(255)"),
                 ("poll_file", "varchar(255)"),
                 ("last_install_at", "timestamp"), ("install_log", "text"),
+                ("report_interval_min", "integer"),
             ):
                 if col not in acols:
                     await conn.execute(text(f"alter table agent add column {col} {decl}"))

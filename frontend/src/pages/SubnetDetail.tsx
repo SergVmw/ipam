@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Chart from "../components/Chart";
 import IpGrid, { BlockGrid } from "../components/IpGrid";
 import { Th, useSort } from "../components/Sort";
 import Modal from "../components/Modal";
 import type { Block, EventOut, Ip, ScanRun, Subnet, Usage, UsagePoint } from "../types";
-import { fmt, fmtDate, displayState, timeAgo, pctColor, COND_FREE_DAYS } from "../util";
+import { fmt, fmtDate, displayState, timeAgo, pctColor, COND_FREE_DAYS, isInsideCidr, prefixOf, subnetsWord } from "../util";
 
 const EVENT_RU: Record<string, string> = {
   ip_seen: "новый IP",
@@ -117,10 +117,12 @@ function SRow({ k, v }: { k: string; v: ReactNode }) {
 
 export default function SubnetDetail() {
   const { id } = useParams();
+  const nav = useNavigate();
   const sid = Number(id);
   const [searchParams] = useSearchParams();
   const ipParam = searchParams.get("ip");
   const [subnet, setSubnet] = useState<Subnet | null>(null);
+  const [allSubnets, setAllSubnets] = useState<Subnet[]>([]);
   const [ips, setIps] = useState<Ip[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [netView, setNetView] = useState<string | null>(null);
@@ -147,16 +149,18 @@ export default function SubnetDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [s, u, ev, rn] = await Promise.all([
+      const [s, u, ev, rn, all] = await Promise.all([
         api<Subnet>(`/subnets/${sid}`),
         api<Usage>(`/subnets/${sid}/usage?days=30`),
         api<EventOut[]>(`/events?subnet_id=${sid}&limit=30`),
         api<ScanRun[]>(`/subnets/${sid}/scan-runs?limit=5`),
+        api<Subnet[]>("/subnets"),
       ]);
       setSubnet(s);
       setUsage(u);
       setEvents(ev);
       setRuns(rn);
+      setAllSubnets(all);
       setErr("");
       if (s.total > 1024) {
         if (netView) {
@@ -268,6 +272,33 @@ export default function SubnetDetail() {
     [ips],
   );
 
+  // Подсети, лежащие ВНУТРИ этой сети (иерархия master/подсети, как в phpIPAM):
+  // «дети» — непосредственные (без промежуточных), счётчик — все потомки.
+  const ipIntOf = (cidr: string) => {
+    const p = (cidr.split("/")[0] || "0.0.0.0").split(".").map((x) => parseInt(x, 10) || 0);
+    return ((p[0] * 256 + p[1]) * 256 + p[2]) * 256 + p[3];
+  };
+  const descCount = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const a of allSubnets)
+      for (const b of allSubnets)
+        if (a.id !== b.id && isInsideCidr(a.cidr, b.cidr)) m.set(b.id, (m.get(b.id) || 0) + 1);
+    return m;
+  }, [allSubnets]);
+  const children = useMemo(() => {
+    if (!subnet) return [] as Subnet[];
+    const inside = allSubnets.filter((o) => o.id !== subnet.id && isInsideCidr(o.cidr, subnet.cidr));
+    const direct = inside.filter((c) => !inside.some((m) => m.id !== c.id && isInsideCidr(c.cidr, m.cidr)));
+    return direct.sort((a, b) => ipIntOf(a.cidr) - ipIntOf(b.cidr) || prefixOf(a.cidr) - prefixOf(b.cidr));
+  }, [subnet, allSubnets]);
+  // сколько адресов этой сети «переехало» в подсети (не показаны в её IP-таблице)
+  const hiddenInSubs = useMemo(() => {
+    if (!subnet) return 0;
+    const p = prefixOf(subnet.cidr);
+    const full = p === 32 ? 1 : p === 31 ? 2 : Math.pow(2, 32 - p) - 2;
+    return Math.max(0, full - subnet.total);
+  }, [subnet]);
+
   // Настройки → «Оформление сайта»: показывать ли секцию «IP без hostname — внести в DNS»
   const [showNoDns, setShowNoDns] = useState(true);
   useEffect(() => {
@@ -371,6 +402,52 @@ export default function SubnetDetail() {
 
       {err && <div className="error">{err}</div>}
 
+      {/* подсети внутри этой сети (иерархия master/подсети) — как в phpIPAM */}
+      {children.length > 0 && (
+        <div className="card">
+          <div className="card-title row">
+            Подсети
+            <span className="muted small">{children.length} {subnetsWord(children.length)} внутри этой сети · клик — открыть</span>
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>CIDR</th>
+                <th>Имя</th>
+                <th>Описание</th>
+                <th>Подсети</th>
+                <th>Заполнено</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {children.map((c) => {
+                const cc = descCount.get(c.id) ?? 0;
+                return (
+                  <tr key={c.id} className="clickable" onClick={() => nav(`/subnets/${c.id}`)}>
+                    <td className="mono"><Link to={`/subnets/${c.id}`}>{c.cidr}</Link></td>
+                    <td><Link to={`/subnets/${c.id}`} className="link">{c.name}</Link></td>
+                    <td className="cell-descr muted" title={c.descr || ""}>{c.descr || ""}</td>
+                    <td>
+                      {cc > 0
+                        ? <Link to={`/subnets?inside=${encodeURIComponent(c.cidr)}`} className="small" style={{ color: "var(--accent)" }} onClick={(e) => e.stopPropagation()}>{cc} {subnetsWord(cc)}</Link>
+                        : <span className="muted">—</span>}
+                    </td>
+                    <td style={{ minWidth: 150 }}>
+                      <div className="bar"><div className="bar-fill" style={{ width: `${c.pct}%`, background: pctColor(c.pct) }} /></div>
+                      <span className="muted small">{c.used + c.reserved}/{c.total} · {c.pct}%</span>
+                    </td>
+                    <td className="actions-cell" onClick={(e) => e.stopPropagation()}>
+                      <Link className="btn ghost small" to={`/subnets/${c.id}`}>открыть</Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* верх: использование (+график 30 дней) + сводка */}
       <div className="cards-row2">
         <div className="card">
@@ -447,6 +524,11 @@ export default function SubnetDetail() {
         <div className="card-title row">
           IP-адреса
           <span className="muted small">{tableRows.length} строк</span>
+          {hiddenInSubs > 0 && (
+            <span className="muted small" title="Эти адреса принадлежат подсетям, перечисленным в блоке «Подсети»">
+              + {hiddenInSubs} в подсетях
+            </span>
+          )}
           <div className="table-controls">
             <input
               className="input"

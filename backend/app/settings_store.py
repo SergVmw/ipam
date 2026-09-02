@@ -37,6 +37,7 @@ KEYS = {
     "show_no_dns": bool,
     "search_mode": str,
     "org_name": str,
+    "agent_report_interval_min": int,
 }
 
 
@@ -72,6 +73,9 @@ def defaults() -> dict:
         "show_no_dns": True,
         "search_mode": "page",
         "org_name": "",
+        # глобальный троттлинг отчётов агентов (мин): повторный отчёт не чаще
+        # этого интервала; агент забирает его с /api/agent/config
+        "agent_report_interval_min": 15,
     }
 
 

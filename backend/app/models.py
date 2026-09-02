@@ -163,7 +163,8 @@ class Agent(Base):
     ssh_port: Mapped[int | None] = mapped_column(Integer)
     ssh_user: Mapped[str | None] = mapped_column(String(64))
     ssh_password: Mapped[str | None] = mapped_column(String(255))
-    poll_file: Mapped[str | None] = mapped_column(String(255))  # файл-триггер принудительного опроса на агенте
+    poll_file: Mapped[str | None] = mapped_column(String(255))  # файл-триггер принудительного опроса
+    report_interval_min: Mapped[int | None] = mapped_column(Integer)  # None/0 = глобальная настройка на агенте
     last_install_at: Mapped[datetime | None] = mapped_column(DateTime)
     install_log: Mapped[str | None] = mapped_column(Text)  # json: шаги последней установки
 
