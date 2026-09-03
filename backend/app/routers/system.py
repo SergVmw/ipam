@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
+from ..scanner.logbuffer import RETENTION_S, scan_log
 from ..security import require_role
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -264,3 +265,17 @@ async def system_info(user=Depends(require_role("admin"))):
                                             "db": None, "platform": ""}
     _cache[0], _cache[1] = time.time(), info
     return info
+
+
+@router.get("/system/scan-logs")
+async def scan_logs(limit: int = 500, user=Depends(require_role("admin"))):
+    """Логи сканера по всем сетям (in-memory, удержание RETENTION_S секунд = 1 час). Только admin.
+
+    Для анализа работы (не работы) fping/nmap/TCP-пробы: метод, exit-code,
+    stderr, список живых IP, счётчики, длительность. Новые сначала.
+    """
+    return {
+        "retention_s": RETENTION_S,
+        "count": len(scan_log),
+        "items": scan_log.get(limit=min(max(limit, 1), 2000)),
+    }

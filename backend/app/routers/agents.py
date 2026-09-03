@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..agent_installer import install_agent
 from ..config import settings
 from ..db import SessionLocal, get_db
-from ..models import Agent, AgentReport, Ip, IpEvent, Subnet, utcnow
+from ..models import Agent, AgentReport, AgentSubnetReport, Ip, IpEvent, Subnet, utcnow
 from ..schemas import AgentIn, AgentUpdate
 from ..security import get_current_user, require_role
 from ..service import audit
@@ -349,6 +349,11 @@ async def agent_report(request: Request, db: AsyncSession = Depends(get_db)):
 
     now = utcnow()
     reported: set[str] = set()
+    # сети, за которые отвечает агент (None/пусто = все сети)
+    target = [s for s, _, _ in ranges if agent_subnet_ids is None or s.id in agent_subnet_ids]
+    # сколько хостов сети агент видел в этом отчёте (для индикатора доступности «А»):
+    # все сети агента, включая 0 — «в свежем отчёте хостов из сети нет»
+    seen_by_subnet: dict[int, int] = {s.id: 0 for s in target}
     applied = 0
     with_mac = 0
     for h in hosts:
@@ -366,6 +371,7 @@ async def agent_report(request: Request, db: AsyncSession = Depends(get_db)):
         if row is None:
             continue
         reported.add(ip_str)
+        seen_by_subnet[subnet.id] = seen_by_subnet.get(subnet.id, 0) + 1
         mac = str(h.get("mac") or "").lower()
         vendor = str(h.get("vendor") or "").strip() or None
         if mac:
@@ -391,7 +397,6 @@ async def agent_report(request: Request, db: AsyncSession = Depends(get_db)):
 
     # анти-флэппинг: IP в сетях агента, которых нет в отчёте
     if reported:
-        target = [s for s, _, _ in ranges if agent_subnet_ids is None or s.id in agent_subnet_ids]
         for s in target:
             rows = (await db.execute(
                 select(Ip).where(Ip.subnet_id == s.id, Ip.state.in_(["used", "offline"]))
@@ -419,6 +424,20 @@ async def agent_report(request: Request, db: AsyncSession = Depends(get_db)):
         AgentReport.agent_id == agent.id,
         AgentReport.at < now - timedelta(days=14),
     ))
+
+    # --- доступность сетей из агента: последний отчёт по каждой сети (upsert).
+    # hosts=0 — в этом отчёте хостов из сети не было (сеть недоступна из агента)
+    for sid, n in seen_by_subnet.items():
+        rec = (await db.execute(select(AgentSubnetReport).where(
+            AgentSubnetReport.agent_id == agent.id,
+            AgentSubnetReport.subnet_id == sid,
+        ))).scalar_one_or_none()
+        if rec is None:
+            db.add(AgentSubnetReport(agent_id=agent.id, subnet_id=sid, at=now, hosts=n))
+        else:
+            rec.at = now
+            rec.hosts = n
+
     await db.commit()
     return {"ok": True, "reported": len(reported), "applied": applied, "with_mac": with_mac}
 

@@ -28,6 +28,11 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    # fping (ICMP) и nmap в контейнере требуют raw-сокеты:
+    # без NET_RAW fping падает с "Operation not permitted", а nmap -sn
+    # делает host discovery TCP-пробами ("unreliable without root")
+    cap_add:
+      - NET_RAW
     environment:
       DATABASE_URL: postgresql+asyncpg://ipam:ipam@db1:5432/ipam
       SECRET_KEY: change-me-org1-32+chars
@@ -64,6 +69,11 @@ services:
     restart: unless-stopped
     ports:
       - "8001:8000"                # свой внешний порт
+    # fping (ICMP) и nmap в контейнере требуют raw-сокеты:
+    # без NET_RAW fping падает с "Operation not permitted", а nmap -sn
+    # делает host discovery TCP-пробами ("unreliable without root")
+    cap_add:
+      - NET_RAW
     environment:
       DATABASE_URL: postgresql+asyncpg://ipam:ipam2@db2:5432/ipam
       SECRET_KEY: change-me-org2-32+chars   # обязательно другой (разные JWT)

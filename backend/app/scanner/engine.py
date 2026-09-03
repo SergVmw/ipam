@@ -11,6 +11,7 @@ from ..db import SessionLocal
 from ..models import Ip, IpEvent, ScanRun, Subnet, UsageSnapshot, utcnow
 from ..settings_store import get_all
 from .dns import resolve_ptrs
+from .logbuffer import scan_log
 from .mail import send_scan_mail
 from .ping import sweep
 
@@ -34,7 +35,7 @@ def add_event(db, ip: str | None, subnet_id: int, type: str, detail: dict | None
                    detail=json.dumps(detail or {}, ensure_ascii=False), at=utcnow()))
 
 
-async def scan_subnet_now(subnet_id: int) -> None:
+async def scan_subnet_now(subnet_id: int, trigger: str = "manual") -> None:
     busy_ids.add(subnet_id)
     try:
         async with _scan_sem:
@@ -46,12 +47,13 @@ async def scan_subnet_now(subnet_id: int) -> None:
                 rt = await get_all(db)  # runtime-настройки (Настройки в UI)
                 error: str | None = None
                 alive_map: dict[str, dict] = {}
+                diag: dict = {}  # диагностика sweep для лога сканера (метод, exit, stderr, alive_ips)
                 try:
                     # метод: свой у сети (если задан) иначе глобальный из Настроек
                     method = subnet.scan_method or str(rt.get("scan_method", "auto"))
                     alive_map = await sweep(subnet.cidr, method=method,
                                             timeout_ms=int(rt["scan_timeout_ms"]), rate=int(rt["scan_rate"]),
-                                            ports=settings.probe_ports)
+                                            ports=settings.probe_ports, diag=diag)
                 except Exception as e:
                     error = str(e)
                     log.warning("scan %s failed: %s", subnet.cidr, e)
@@ -143,6 +145,31 @@ async def scan_subnet_now(subnet_id: int) -> None:
                     if s_ in c:
                         c[s_] = n
                 db.add(UsageSnapshot(subnet_id=subnet_id, at=started, total=sum(c.values()), **c))
+                # лог сканера (in-memory, удержание 1 час): анализ работы fping/nmap/TCP-пробы
+                scan_log.add({
+                    "at": started.isoformat(),
+                    "subnet_id": subnet.id,
+                    "cidr": subnet.cidr,
+                    "name": subnet.name,
+                    "trigger": trigger,
+                    "method": diag.get("method"),
+                    "method_requested": diag.get("method_requested"),
+                    "params": {
+                        "timeout_ms": int(rt["scan_timeout_ms"]),
+                        "rate": int(rt["scan_rate"]),
+                        "ports": diag.get("ports"),
+                    },
+                    "hosts_total": len(rows),
+                    "alive": len(alive),
+                    "new": new_ips,
+                    "freed": freed_ips,
+                    "duration_ms": diag.get("duration_ms"),
+                    "exit_code": diag.get("exit_code"),
+                    "stderr": diag.get("stderr_tail"),
+                    "alive_ips": diag.get("alive_ips"),
+                    "error": error,
+                    "counts": c,
+                })
                 await db.commit()
                 log.info("scan %s done: alive=%s new=%s freed=%s error=%s",
                          subnet.cidr, len(alive), new_ips, freed_ips, error)

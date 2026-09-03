@@ -216,6 +216,28 @@ h3 { margin: 0; font-weight: 600; }
 select.input { width: auto; min-width: 170px; cursor: pointer; }
 textarea.input { resize: vertical; }
 .input:disabled { opacity: 0.45; cursor: default; }
+
+/* индикаторы доступности сети: «Я» (ядро) / «А» (агент) */
+.reach-dots { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.reach {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  cursor: help; user-select: none;
+}
+.reach-ok  { background: rgba(34,197,94,.18);  color: #22c55e; border: 1px solid rgba(34,197,94,.45); }
+.reach-off,
+.reach-no  { background: rgba(100,116,139,.16); color: #94a3b8; border: 1px solid rgba(100,116,139,.45); }
+.reach-err { background: rgba(245,158,11,.18); color: #f59e0b; border: 1px solid rgba(245,158,11,.5); }
+.reach-none{ background: transparent; color: #475569; border: 1px dashed #33415a; }
+
+/* лог сканера */
+.log-pre {
+  background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 8px;
+  padding: 8px 10px; font-family: var(--mono, monospace); font-size: 11px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; margin: 0;
+}
+.row-error td { background: rgba(239, 68, 68, 0.06); }
 .color { width: 36px; height: 26px; border: none; background: none; padding: 0; cursor: pointer; border-radius: 6px; }
 .inline { display: flex; gap: 8px; align-items: center; flex: 1; }
 .grid-search { max-width: 300px; margin-left: auto; }

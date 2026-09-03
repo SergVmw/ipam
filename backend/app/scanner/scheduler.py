@@ -30,7 +30,7 @@ async def due_scan_job() -> None:
             await db.commit()
             for s in due:
                 if s.id not in busy_ids:
-                    spawn(scan_subnet_now(s.id))
+                    spawn(scan_subnet_now(s.id, trigger="schedule"))
     except Exception:
         log.exception("due_scan_job failed")
 

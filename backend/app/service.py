@@ -188,6 +188,85 @@ async def last_scans(db: AsyncSession, subnet_ids: list[int]) -> dict[int, dict]
     return out
 
 
+# --- Доступность сетей для индикаторов «Я» (ядро) и «А» (агент) в «Сети» ---
+# Критерий доступности: хоть ОДИН хост сети достижим. Критерий недоступности:
+# все адреса unreachable (живых 0) — но ТОЛЬКО если скан/отчёт отработал.
+# Состояния: ok (зелёный) | off/no (серый — недоступно) | err (жёлтый — ошибка скана,
+# результат не достоверен) | none (пунктирный — данных нет: не сканировалось / агента нет)
+
+def core_reach_from_scan(scan: dict | None, total: int) -> dict:
+    """Индикатор «Я» по последнему скану ЯДРОМ."""
+    if not scan or not scan.get("last_scan_at"):
+        return {"state": "none", "alive": None, "at": None, "error": None, "total": total}
+    at = scan["last_scan_at"]
+    alive = scan.get("last_alive")
+    if scan.get("last_error"):
+        return {"state": "err", "alive": alive, "at": at, "error": scan["last_error"], "total": total}
+    state = "ok" if (alive or 0) >= 1 else "off"
+    return {"state": state, "alive": alive, "at": at, "error": None, "total": total}
+
+
+async def agent_reach_by_subnet(db: AsyncSession, subnet_ids: list[int]) -> dict[int, dict]:
+    """Индикатор «А» по последним ОТЧЁТАМ АГЕНТОВ, ответственных за сеть.
+
+    Свежесть отчёта: не старше max(45 мин, 3×интервал отчёта агента).
+    ok  — свежий отчёт содержит ≥1 хост сети;
+    no  — свежий отчёт есть, но хостов из сети 0 (недоступно из агента);
+    off — агент за сеть отвечает, но свежих отчётов нет (агент молчит/упал);
+    none — ни один включённый агент не отвечает за эту сеть.
+    """
+    from datetime import timedelta
+
+    from .models import Agent, AgentSubnetReport
+    from .settings_store import get_all
+
+    out: dict[int, dict] = {
+        sid: {"state": "none", "at": None, "hosts": None, "agent": None} for sid in subnet_ids
+    }
+    if not subnet_ids:
+        return out
+    agents = (await db.execute(select(Agent).where(Agent.enabled.is_(True)))).scalars().all()
+    if not agents:
+        return out
+    st = await get_all(db)
+    global_min = max(1, min(1440, int(st.get("agent_report_interval_min") or 15)))
+    now = utcnow()
+    # последние записи (agent, subnet)
+    reps = (await db.execute(
+        select(AgentSubnetReport).where(AgentSubnetReport.subnet_id.in_(subnet_ids))
+    )).scalars().all()
+    latest: dict[tuple[int, int], AgentSubnetReport] = {}
+    for r in reps:
+        k = (r.agent_id, r.subnet_id)
+        cur = latest.get(k)
+        if cur is None or (r.at, r.id) > (cur.at, cur.id):
+            latest[k] = r
+    # ответственность: сеть -> агенты
+    responsible: dict[int, list[Agent]] = {sid: [] for sid in subnet_ids}
+    for a in agents:
+        a_ids = set(int(x) for x in (a.subnet_ids or "").split(",") if x.strip()) if a.subnet_ids else None
+        for sid in subnet_ids:
+            if a_ids is None or sid in a_ids:
+                responsible[sid].append(a)
+    RANK = {"none": 0, "off": 1, "no": 2, "ok": 3}
+    for sid, ags in responsible.items():
+        res = out[sid]
+        for a in ags:
+            interval_min = max(1, min(1440, int(a.report_interval_min or global_min)))
+            window = timedelta(minutes=max(45, 3 * interval_min))
+            rec = latest.get((a.id, sid))
+            if rec is not None and rec.at >= now - window:
+                st_, at, hosts = ("ok" if rec.hosts > 0 else "no"), rec.at.isoformat(), rec.hosts
+            elif rec is not None:
+                st_, at, hosts = "off", rec.at.isoformat(), None
+            else:
+                # агент отчитывался (в целом), но по этой сети свежей записи нет
+                st_, at, hosts = "off", (a.last_report_at.isoformat() if a.last_report_at else None), None
+            if RANK[st_] > RANK[res["state"]]:
+                res.update(state=st_, at=at, hosts=hosts, agent=a.name)
+    return out
+
+
 def subnet_dict(s: Subnet, counts: dict, vlan) -> dict:
     c = {**ZEROS, **counts}
     return {

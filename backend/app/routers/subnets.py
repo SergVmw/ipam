@@ -13,10 +13,12 @@ from ..scanner.engine import busy_ids, scan_subnet_now, spawn
 from ..security import get_current_user, require_role
 from ..service import (
     ZEROS,
+    agent_reach_by_subnet,
     audit,
     check_cidr_in_net,
     check_overlap,
     cond_free_by_subnet,
+    core_reach_from_scan,
     finish_subnet_counts,
     ip_dict,
     last_scans,
@@ -69,10 +71,15 @@ async def list_subnets(vlan_id: int | None = None, db: AsyncSession = Depends(ge
         finish_subnet_counts(c)
     vlans = await _vlan_map(db)
     scans = await last_scans(db, [s.id for s in subnets])
+    agent_reach = await agent_reach_by_subnet(db, [s.id for s in subnets])
     out = []
     for s in subnets:
-        d = subnet_dict(s, counts.get(s.id, dict(ZEROS)), vlans.get(s.vlan_id))
-        d.update(scans.get(s.id, {"last_scan_at": None, "last_error": None}))
+        c = counts.get(s.id, dict(ZEROS))
+        d = subnet_dict(s, c, vlans.get(s.vlan_id))
+        d.update(scans.get(s.id, {"last_scan_at": None, "last_error": None, "last_alive": None}))
+        # индикаторы доступности: «Я» — скан из ядра, «А» — отчёты агентов
+        d["core_reach"] = core_reach_from_scan(scans.get(s.id), c.get("total", 0))
+        d["agent_reach"] = agent_reach.get(s.id, {"state": "none", "at": None, "hosts": None, "agent": None})
         out.append(d)
     return out
 

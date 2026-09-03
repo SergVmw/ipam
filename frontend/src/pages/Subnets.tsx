@@ -12,6 +12,32 @@ const emptyForm = {
   scan_enabled: false, scan_interval_s: 3600, descr: "",
 };
 
+// Индикаторы доступности сети: «Я» — скан из ядра, «А» — свежие отчёты агентов.
+// Зелёный — хоть один хост сети доступен; серый — все адреса недоступны
+// (но скан/отчёт отработал); жёлтый — ошибка скана (результат не достоверен);
+// пунктирный — данных нет (не сканировалось / за сеть не отвечает ни один агент).
+function ReachDots({ s }: { s: Subnet }) {
+  const core = s.core_reach;
+  const agent = s.agent_reach;
+  if (!core && !agent) return null;
+  const coreTitle = !core ? ""
+    : core.state === "ok" ? `Ядро: ${core.alive} из ${core.total} хостов живо · скан ${fmt(core.at)}`
+    : core.state === "off" ? `Ядро: 0 из ${core.total} живых — сеть недоступна из ядра · скан ${fmt(core.at)}`
+    : core.state === "err" ? `Ядро: ошибка скана: ${core.error}`
+    : "Ядро: сеть ещё не сканировалась";
+  const agentTitle = !agent ? ""
+    : agent.state === "ok" ? `Агент: ${agent.hosts} хостов сети живы · ${agent.agent || "агент"} · отчёт ${fmt(agent.at)}`
+    : agent.state === "no" ? `Агент: 0 хостов сети — недоступно из агента (${agent.agent || "агент"}) · отчёт ${fmt(agent.at)}`
+    : agent.state === "off" ? `Агент: нет свежего отчёта (${agent.agent || "агент"})${agent.at ? ` · последний ${fmt(agent.at)}` : " · отчётов не было"}`
+    : "Агент: за эту сеть не отвечает ни один агент";
+  return (
+    <span className="reach-dots" onClick={(e) => e.stopPropagation()}>
+      {core && <span className={`reach reach-${core.state}`} title={coreTitle}>Я</span>}
+      {agent && <span className={`reach reach-${agent.state}`} title={agentTitle}>А</span>}
+    </span>
+  );
+}
+
 export default function Subnets() {
   const [items, setItems] = useState<Subnet[]>([]);
   const [vlans, setVlans] = useState<Vlan[]>([]);
@@ -185,6 +211,7 @@ export default function Subnets() {
                       }}
                     >удалить</button>
                   )}
+                  {!grp && <ReachDots s={s} />}
                 </td>
               </tr>
               );

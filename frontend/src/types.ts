@@ -34,6 +34,11 @@ export interface Subnet {
   last_scan_at?: string | null;
   last_error?: string | null;
   busy?: boolean;
+  // индикатор доступности: «Я» — последний скан ядром (ok=живь ≥1, off=живых 0,
+  // err=ошибка скана, none=не сканировалось); «А» — свежие отчёты агентов
+  // (ok=живь ≥1, no=отчёт есть но живых 0, off=агент молчит, none=агента нет)
+  core_reach?: { state: "ok" | "off" | "err" | "none"; alive: number | null; at: string | null; error: string | null; total: number };
+  agent_reach?: { state: "ok" | "no" | "off" | "none"; at: string | null; hosts: number | null; agent: string | null };
 }
 
 export interface Ip {
@@ -144,6 +149,28 @@ export interface EventOut {
   type: string;
   detail: any;
   at: string | null;
+}
+
+// Лог сканера (in-memory, удержание 1 час): диагностика fping/nmap/TCP-пробы
+export interface ScanLogEntry {
+  at: string;
+  subnet_id: number;
+  cidr: string;
+  name: string;
+  trigger: string; // manual | schedule
+  method: string | null;          // разрешённый метод: fping | nmap | tcp
+  method_requested: string | null; // запрошенный (auto/fping/nmap/tcp)
+  params: { timeout_ms: number; rate: number; ports: number[] | null };
+  hosts_total: number;
+  alive: number;
+  new: number;
+  freed: number;
+  duration_ms: number | null;
+  exit_code: number | null;
+  stderr: string | null;
+  alive_ips: string[] | null;
+  error: string | null;
+  counts: { free: number; used: number; reserved: number; offline: number };
 }
 
 export interface UsagePoint {

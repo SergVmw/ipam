@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -181,6 +181,20 @@ class AgentReport(Base):
     hosts: Mapped[int] = mapped_column(Integer, default=0)      # IP-записей в отчёте
     applied: Mapped[int] = mapped_column(Integer, default=0)    # применили к строкам ядра
     with_mac: Mapped[int] = mapped_column(Integer, default=0)   # хостов с MAC
+
+
+class AgentSubnetReport(Base):
+    """Последний отчёт агента ПО КАЖДОЙ СЕТИ (upsert): для индикатора доступности «А»
+    в таблице «Сети» — сколько хостов сети агент видел в свежем отчёте.
+    hosts=0 — в свежем отчёте хостов из этой сети не было (сеть недоступна из агента)."""
+    __tablename__ = "agent_subnet_report"
+    __table_args__ = (UniqueConstraint("agent_id", "subnet_id", name="uq_agent_subnet_report"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agent.id", ondelete="CASCADE"), index=True, nullable=False)
+    subnet_id: Mapped[int] = mapped_column(ForeignKey("subnet.id", ondelete="CASCADE"), index=True, nullable=False)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+    hosts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class DocSection(Base):

@@ -19,6 +19,11 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    # fping (ICMP) и nmap в контейнере требуют raw-сокеты:
+    # без NET_RAW fping падает с "Operation not permitted", а nmap -sn
+    # делает host discovery TCP-пробами ("unreliable without root")
+    cap_add:
+      - NET_RAW
     environment:
       DATABASE_URL: postgresql+asyncpg://ipam:ipam@db:5432/ipam
       SECRET_KEY: change-me-in-production

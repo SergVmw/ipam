@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { HashRouter, Link, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { api, getToken, setToken } from "./api";
 import SearchBox from "./components/SearchBox";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
+import ScannerLogs from "./pages/ScannerLogs";
 import Settings from "./pages/Settings";
 import Subnets from "./pages/Subnets";
 import SubnetDetail from "./pages/SubnetDetail";
@@ -89,6 +90,7 @@ function Layout({ meta, onLogout, onMetaChanged }: { meta: SiteMeta; onLogout: (
           <NavLink to="/locations" className="nav-sub">Местоположения</NavLink>
           <NavLink to="/docs">Документация</NavLink>
           {role === "admin" && <NavLink to="/settings">Настройки</NavLink>}
+          {role === "admin" && <NavLink to="/scanner-logs">Скан-логи</NavLink>}
         </nav>
         {meta.ui_links.length > 0 && (
           <div className="sidebar-links">
@@ -177,6 +179,18 @@ function Layout({ meta, onLogout, onMetaChanged }: { meta: SiteMeta; onLogout: (
   );
 }
 
+// Доступ только для администраторов: сам опрашивает /auth/me,
+// пока не узнал роль — «Загрузка…», не-админам редирект на Обзор
+function AdminOnly({ children }: { children: ReactNode }) {
+  const [role, setRole] = useState<string>("");
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    api<any>("/auth/me").then((m) => { setRole(m?.role || ""); setLoaded(true); }).catch(() => setLoaded(true));
+  }, []);
+  if (!loaded) return <div className="page"><div className="muted">Загрузка…</div></div>;
+  return role === "admin" ? <>{children}</> : <Navigate to="/" replace />;
+}
+
 export default function App() {
   const [meta, setMeta] = useState<SiteMeta>(defaultMeta);
   const loadMeta = () => {
@@ -204,6 +218,7 @@ export default function App() {
           <Route index element={<Overview />} />
           <Route path="subnets" element={<Subnets />} />
           <Route path="subnets/:id" element={<SubnetDetail />} />
+          <Route path="scanner-logs" element={<AdminOnly><ScannerLogs /></AdminOnly>} />
           <Route path="vlans" element={<Vlans />} />
           <Route path="locations" element={<Locations />} />
           <Route path="links" element={<Links />} />

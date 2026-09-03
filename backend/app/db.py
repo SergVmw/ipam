@@ -15,6 +15,17 @@ engine = create_async_engine(
     connect_args={"timeout": 30} if settings.DATABASE_URL.startswith("sqlite") else {},
 )
 
+# SQLite по умолчанию НЕ включает внешние ключи — включаем на каждом подключении,
+# чтобы ondelete="CASCADE" (ip→subnet, agent→reports, …) реально работал
+if settings.DATABASE_URL.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_fk_on(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
