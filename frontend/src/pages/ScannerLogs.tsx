@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { fmt } from "../util";
-import type { ScanLogEntry } from "../types";
+import type { DnsScanStats, DnsServerStat, ScanLogEntry } from "../types";
 
 // Лог сканера по всем сетям. Хранится ТОЛЬКО 1 час, в памяти процесса
 // (после перезапуска контейнера — чистый). Для анализа работы (не работы)
@@ -12,6 +12,85 @@ function MethodBadge({ e }: { e: ScanLogEntry }) {
   const cls = e.method === "fping" ? "tag-ok" : e.method === "nmap" ? "tag-ldap" : "tag-reserved_alive";
   const auto = e.method_requested && e.method_requested !== "auto" ? null : (e.method_requested === "auto" ? " · auto" : "");
   return <span className={"tag " + cls}>{e.method}{auto}</span>;
+}
+
+// Строка по одному DNS-серверу: отвечал / НЕ ответил / не опрашивался
+function DnsServerRow({ s }: { s: DnsServerStat }) {
+  let status: ReactNode;
+  let statusCls = "muted small";
+  if (s.queries === 0) {
+    status = "не опрашивался";
+  } else if (s.answered === 0) {
+    status = s.timeouts > 0 ? `НЕ ОТВЕТИЛ (timeout ×${s.timeouts})` : "НЕ ОТВЕТИЛ";
+    statusCls = "bad";
+  } else if (s.ok > 0) {
+    status = "отвечал, отдал PTR";
+    statusCls = "tag-ok";
+  } else {
+    status = "отвечал, но записей PTR нет";
+    statusCls = "tag-ldap";
+  }
+  return (
+    <div style={{ border: "1px solid rgba(128,128,128,.3)", borderRadius: 8, padding: "7px 10px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+        <span className="mono small">{s.server}</span>
+        {s.answered === 0 && s.queries > 0
+          ? <span className="bad">{status}</span>
+          : <span className={statusCls}>{status}</span>}
+      </div>
+      <div className="muted small mono" style={{ marginTop: 3, lineHeight: 1.5 }}>
+        запросов: {s.queries} · ответил: {s.answered}
+        {s.answered > 0 && <>
+          {" · с PTR: "}<b>{s.ok}</b> · пусто: {s.empty}
+          {s.refused > 0 && <> · refused: {s.refused}</>}
+          {s.servfail > 0 && <> · servfail: {s.servfail}</>}
+        </>}
+        {s.timeouts > 0 && <> · таймауты: {s.timeouts}</>}
+        {s.errors > 0 && <> · ошибки: {s.errors}</>}
+        {s.rtt_avg_ms != null && <> · RTT ср.: {s.rtt_avg_ms} мс</>}
+      </div>
+    </div>
+  );
+}
+
+// Блок «DNS (PTR)» в деталях записи сканера: какие серверы использовались и отвечали ли.
+// Присутствует в каждой записи: если PTR не выполнялся — видно, почему и какие серверы настроены.
+function DnsBlock({ dns }: { dns: DnsScanStats }) {
+  const dead = dns.by_server.filter((s) => s.queries > 0 && s.answered === 0).length;
+  const src = dns.mode === "custom"
+    ? <span className="mono">{dns.configured.join(", ") || "—"}</span>
+    : <span className="mono">(системный резолвер /etc/resolv.conf)</span>;
+  let summary: ReactNode = null;
+  if (!dns.enabled) {
+    summary = <div className="small" style={{ marginBottom: 8, lineHeight: 1.6 }}>
+      <span className="bad">PTR-резолв отключён в Настройках</span> — hostname по DNS не запрашиваются.
+      {" Использовались бы серверы: "}{src}
+    </div>;
+  } else if (dns.attempted === 0) {
+    summary = <div className="small" style={{ marginBottom: 8, lineHeight: 1.6 }}>
+      PTR-запросы не выполнялись: у всех живых адресов hostname уже известен (или вручную задан).
+      {" Настроенные серверы: "}{src}
+    </div>;
+  } else {
+    summary = <div className="small" style={{ marginBottom: 8, lineHeight: 1.6 }}>
+      серверы: {src} · запрошено IP: <b>{dns.attempted}</b>
+      {" · разрешено по DNS: "}<b>{dns.resolved_by_dns}</b>
+      {dns.resolved_by_fallback > 0 && <> · разрешено OS-резолвером (/etc/hosts): {dns.resolved_by_fallback}</>}
+      {dns.unresolved > 0 && <span className="warn"> · hostname не найден: {dns.unresolved}</span>}
+      {dead > 0 && <span className="bad"> · серверов без ответа: {dead}</span>}
+    </div>;
+  }
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted small" style={{ marginBottom: 6 }}>DNS (PTR-резолв)</div>
+      {summary}
+      {dns.enabled && dns.by_server.length > 0
+        ? <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 8 }}>
+            {dns.by_server.map((s) => <DnsServerRow key={s.server} s={s} />)}
+          </div>
+        : dns.enabled && <div className="muted small">DNS-серверы не заданы и не найдены — использовался только системный резолвер</div>}
+    </div>
+  );
 }
 
 export default function ScannerLogs() {
@@ -120,7 +199,8 @@ export default function ScannerLogs() {
         Метод «auto» разрешается как nmap → fping → TCP-проба (по наличию бинарников).
         fping: exit 0 — все живы, 1 — часть не ответила (норма), 2+ — ошибка (см. детали: stderr fping).
         nmap без NET_RAW (docker) делает host discovery TCP-пробами и пишет «unreliable without root» —
-        живыми считаются хосты с открытыми портами. Клик по строке — детали (stderr, список живых IP, параметры).
+        живыми считаются хосты с открытыми портами. Клик по строке — детали: параметры, stderr,
+        DNS (какой сервер отвечал на PTR / не ответил), список живых IP.
       </div>
     </div>
   );
@@ -170,6 +250,7 @@ function FragmentRow({ e, open, showAllAlive, onToggle, onShowAll }: {
                   : <div className="muted small">пусто</div>}
               </div>
             </div>
+            {e.dns && <DnsBlock dns={e.dns} />}
             {alive.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <div className="muted small" style={{ marginBottom: 4 }}>

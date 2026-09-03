@@ -171,6 +171,34 @@ export interface ScanLogEntry {
   alive_ips: string[] | null;
   error: string | null;
   counts: { free: number; used: number; reserved: number; offline: number };
+  dns: DnsScanStats | null;   // какой DNS-сервер отвечал на PTR (или не отвечал)
+}
+
+// статистика DNS по одному серверу за скан
+export interface DnsServerStat {
+  server: string;      // host:port
+  port: number;
+  queries: number;     // сколько запросов отправлено
+  answered: number;    // сколько DNS-ответов получено (rcode любой)
+  ok: number;          // ответил + в ответе была PTR-запись (ответ принят)
+  empty: number;       // ответил, но записи нет (NXDOMAIN / NOERROR без ответа)
+  refused: number;     // ответил REFUSED
+  servfail: number;    // ответил SERVFAIL
+  timeouts: number;    // НЕ ответил за отведённое время
+  errors: number;      // прочие ошибки (сеть и т.п.)
+  rtt_avg_ms: number | null;
+}
+
+// агрегированная статистика DNS-резолва за скан
+export interface DnsScanStats {
+  enabled: boolean;                 // PTR-резолв включён в Настройках?
+  mode: "custom" | "system";        // пользовательские серверы или системный резолвер
+  configured: string[];             // настроенные серверы (host:port)
+  attempted: number;                // сколько IP запрошено
+  resolved_by_dns: number;          // разрешено DNS-серверами
+  resolved_by_fallback: number;     // разрешено системным резолвером (/etc/hosts)
+  unresolved: number;               // так и не нашли hostname
+  by_server: DnsServerStat[];
 }
 
 export interface UsagePoint {

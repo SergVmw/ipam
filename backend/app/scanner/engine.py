@@ -10,7 +10,7 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import Ip, IpEvent, ScanRun, Subnet, UsageSnapshot, utcnow
 from ..settings_store import get_all
-from .dns import resolve_ptrs
+from .dns import dns_config_stats, resolve_ptrs
 from .logbuffer import scan_log
 from .mail import send_scan_mail
 from .ping import sweep
@@ -124,11 +124,16 @@ async def scan_subnet_now(subnet_id: int, trigger: str = "manual") -> None:
                         add_event(db, None, subnet_id, "reserved_alive",
                                   {"count": len(reserved_alive), "ips": sorted(reserved_alive)[:20]})
 
-                # hostname по PTR — только для пустых и не-ручных; можно выключить в Настройках
+                # hostname по PTR — только для пустых и не-ручных; можно выключить в Настройках.
+                # resolve_ptrs возвращает ещё и статистику DNS (какой сервер отвечал / не отвечал);
+                # секция "dns" в логе сканера присутствует всегда (см. dns_config_stats).
                 ptrs = {}
                 if rt["resolve_dns"]:
                     servers = [x.strip() for x in str(rt["dns_servers"]).split(",") if x.strip()] or None
-                    ptrs = await resolve_ptrs(need_ptr, servers)
+                    ptrs, dns_stats = await resolve_ptrs(need_ptr, servers)
+                else:
+                    servers = [x.strip() for x in str(rt["dns_servers"]).split(",") if x.strip()] or None
+                    dns_stats = dns_config_stats(servers, enabled=False)
                 for ip_str, name in ptrs.items():
                     row = rows.get(ip_str)
                     if row is not None and not row.hostname and not row.hostname_manual:
@@ -146,7 +151,7 @@ async def scan_subnet_now(subnet_id: int, trigger: str = "manual") -> None:
                         c[s_] = n
                 db.add(UsageSnapshot(subnet_id=subnet_id, at=started, total=sum(c.values()), **c))
                 # лог сканера (in-memory, удержание 1 час): анализ работы fping/nmap/TCP-пробы
-                scan_log.add({
+                entry: dict = {
                     "at": started.isoformat(),
                     "subnet_id": subnet.id,
                     "cidr": subnet.cidr,
@@ -169,7 +174,10 @@ async def scan_subnet_now(subnet_id: int, trigger: str = "manual") -> None:
                     "alive_ips": diag.get("alive_ips"),
                     "error": error,
                     "counts": c,
-                })
+                    # DNS: какой сервер отвечал (или не отвечал) на PTR-запросы, rcode, RTT
+                    "dns": dns_stats,
+                }
+                scan_log.add(entry)
                 await db.commit()
                 log.info("scan %s done: alive=%s new=%s freed=%s error=%s",
                          subnet.cidr, len(alive), new_ips, freed_ips, error)
