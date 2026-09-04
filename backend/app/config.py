@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # DNS
     RESOLVE_DNS: bool = True           # разрешать hostname (PTR) при скане
 
+    # Интеграция: Rack Topology API (сторонний сервис, см. rack-topology.schema.json)
+    # Адрес канонического API; пусто = страница «Стойки» показывает подсказку.
+    RACK_TOPOLOGY_URL: str = ""
+    RACK_TOPOLOGY_TIMEOUT: int = 20      # секунд на запрос к источнику
+
     # Документация: каталог для загруженных файлов (по умолчанию <проект>/docs_files)
     DOCS_DIR: str = ""
     DOCS_MAX_UPLOAD_MB: int = 50       # лимит одного файла

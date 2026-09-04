@@ -659,3 +659,250 @@ th.sortable.active .sort-ind { opacity: 1; color: var(--accent); }
 /* «N подсетей» на плитке /24 (вложенные подсети) */
 .tile-subnets { font-size: 11px; color: var(--accent); cursor: pointer; margin-left: 2px; white-space: nowrap; }
 .tile-subnets:hover { text-decoration: underline; }
+
+/* ============================================================
+   Внешний вид «phpipam»: горизонтальное меню сверху,
+   VLAN и сети деревом в левой колонке (как в phpIPAM).
+   Включается в Настройках → Оформление сайта → Внешний вид.
+   ============================================================ */
+.layout.pip { flex-direction: column; }
+
+.pip-top {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: var(--sp-4);
+  height: 56px; padding: 0 var(--sp-4);
+  background: linear-gradient(180deg, #0e1a2f 0%, #0b1424 100%);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  z-index: 5;
+}
+.pip-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.pip-logo {
+  font-size: 20px; font-weight: 800; letter-spacing: 2px; line-height: 1;
+  background: linear-gradient(120deg, #7dd3fc 0%, #38bdf8 40%, #818cf8 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.pip-logo-img { display: block; max-height: 34px; max-width: 130px; object-fit: contain; border-radius: 6px; }
+.pip-org { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+
+.pip-nav {
+  display: flex; align-items: center; gap: 2px; flex-shrink: 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+.pip-nav::-webkit-scrollbar { display: none; }
+.pip-nav a {
+  padding: 8px 12px; border-radius: 9px; color: var(--text-dim);
+  font-size: 13.5px; font-weight: 500; white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.pip-nav a:hover { background: var(--panel); color: var(--text); }
+.pip-nav a.active {
+  background: linear-gradient(180deg, rgba(56,189,248,0.22), rgba(56,189,248,0.08));
+  color: var(--accent); font-weight: 700; box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.pip-actions { margin-left: auto; display: flex; align-items: center; gap: var(--sp-3); flex-shrink: 0; }
+.pip-search { width: 220px; }
+.pip-search .search-wrap { margin-bottom: 0; }
+.pip-user { display: flex; align-items: center; gap: 10px; }
+.pip-user-name { white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+
+.pip-body { flex: 1; display: flex; min-height: 0; }
+
+.pip-side {
+  width: 300px; flex-shrink: 0; overflow-y: auto;
+  background: linear-gradient(180deg, var(--panel-2) 0%, #0b1322 100%);
+  border-right: 1px solid var(--border);
+  padding: var(--sp-3) var(--sp-3) var(--sp-5);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.pip-side-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 700; letter-spacing: 0.02em;
+  padding: 4px 6px 10px; color: var(--text);
+}
+.pip-side-add {
+  width: 22px; height: 22px; border-radius: 7px; text-align: center; line-height: 20px;
+  background: var(--panel-3); color: var(--accent); font-weight: 700;
+}
+.pip-side-add:hover { background: var(--accent); color: #04212f; }
+
+.pip-sec { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--sp-2); }
+.pip-sec-link {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: 9px; color: var(--text-dim); font-size: 13.5px; font-weight: 600;
+  transition: background 0.12s ease;
+}
+.pip-sec-link:hover { background: var(--panel); color: var(--text); }
+.pip-count { font-size: 11px; color: var(--muted); }
+
+.pip-tree-title {
+  padding: 10px 6px 4px; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.pip-tree { display: flex; flex-direction: column; gap: 1px; }
+
+.pip-vlan {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 8px; border-radius: 8px; cursor: pointer;
+  color: var(--text-dim); font-size: 13.5px;
+  user-select: none; transition: background 0.12s ease;
+}
+.pip-vlan:hover { background: var(--panel); color: var(--text); }
+.pip-vlan.active { color: var(--accent); font-weight: 700; background: rgba(56,189,248,0.08); }
+.pip-arrow { width: 12px; color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.pip-vlan-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pip-subs { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 4px 24px; }
+.pip-sub {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px 5px 12px; border-radius: 8px;
+  color: var(--text-dim); font-size: 13px;
+  overflow: hidden;
+}
+.pip-sub:hover { background: var(--panel); color: var(--text); }
+.pip-sub.active { background: linear-gradient(90deg, rgba(56,189,248,0.16), rgba(56,189,248,0.03)); color: var(--text); }
+.pip-sub.active::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--accent); }
+.pip-bullet {
+  position: absolute; left: 0; bottom: 0; height: 1.5px;
+  background: linear-gradient(90deg, rgba(34,197,94,0.8), rgba(34,197,94,0.1));
+  border-radius: 2px; pointer-events: none;
+}
+.pip-sub.active .pip-bullet { background: linear-gradient(90deg, var(--accent), rgba(56,189,248,0.15)); }
+.pip-sub-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pip-sub-cidr { flex-shrink: 0; }
+.pip-none { padding: 4px 10px 6px; }
+
+.pip-ext-link {
+  display: block; padding: 6px 10px; border-radius: 8px;
+  color: var(--accent); font-size: 13px;
+}
+.pip-ext-link:hover { background: var(--panel); }
+
+.pip-sys {
+  margin-top: auto; padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.pip-sys .sys-line { display: flex; align-items: center; gap: 6px; }
+.pip-sys .sys-bar { width: 60px; }
+
+/* --- личная настройка «что слева в классическом виде»: переключатель VLAN/Сети --- */
+.pip-side-head { gap: 8px; }
+.pip-side-title { flex: 1; min-width: 0; }
+.pip-seg {
+  display: inline-flex; flex-shrink: 0; gap: 0;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  background: var(--panel-2);
+}
+.pip-seg-btn {
+  border: none; background: transparent; cursor: pointer;
+  color: var(--muted); font-size: 11px; font-weight: 600;
+  padding: 3px 11px; line-height: 1.4;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.pip-seg-btn:hover { color: var(--text); background: var(--panel); }
+.pip-seg-btn.on {
+  background: linear-gradient(180deg, #38bdf8, #0ea5e9);
+  color: #04212f;
+}
+
+/* плоский список всех сетей (режим «Сети») */
+.pip-flat { gap: 1px; }
+.pip-sub-flat { align-items: center; padding-left: 10px; }
+.pip-bar-outer {
+  width: 34px; height: 4px; flex-shrink: 0; margin-left: 6px;
+  background: #1b2740; border-radius: 3px; overflow: hidden;
+}
+.pip-bar-outer i { display: block; height: 100%; background: linear-gradient(90deg, #22c55e, #4ade80); border-radius: 3px; }
+
+/* крупный сегмент-переключатель (Мои настройки → Внешний вид) */
+.pip-seg.seg-big .pip-seg-btn { padding: 6px 20px; font-size: 13px; }
+.pip-seg.seg-big { border-radius: 10px; }
+
+/* ============================================================
+   Страница «Стойки» (Rack Topology)
+   ============================================================ */
+.racks-cards { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.rack-stat { padding: 12px 8px; }
+.rack-stat-n { font-size: 24px; font-weight: 800; line-height: 1.1; }
+.rack-stat-l { margin-top: 2px; }
+
+.racks-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: var(--sp-4); align-items: center; }
+.racks-tools .racks-search { width: 240px; }
+
+.racks-row-sec { margin-bottom: var(--sp-5); }
+.racks-row-label {
+  font-weight: 700; margin-bottom: 8px; padding-left: 2px;
+  color: var(--text-dim);
+}
+.racks-row {
+  display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px;
+  align-items: flex-start;
+}
+
+/* шкаф */
+.rack-frame {
+  width: 230px; flex-shrink: 0;
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--panel);
+}
+.rack-frame.has-sel { border-color: var(--accent); }
+.rack-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 6px 10px; border-bottom: 1px solid var(--border-soft);
+  background: var(--panel-3);
+}
+.rack-head b { font-size: 14px; }
+.rack-body {
+  display: grid; grid-auto-flow: row;
+  gap: 1px 0; padding: 4px;
+  background:
+    repeating-linear-gradient(180deg, var(--border-soft) 0 1px, transparent 1px 50%);
+  position: relative;
+  min-height: 120px;
+}
+.rack-guide { position: relative; }
+.rack-u {
+  position: absolute; left: -2px; top: 0;
+  font-size: 8px; color: var(--muted); line-height: 1;
+  transform: translateX(-100%);
+}
+.rack-dev {
+  position: relative; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 5px;
+  padding: 2px 6px;
+  cursor: pointer;
+  display: flex; flex-direction: column;
+  min-height: 8px;
+  transition: filter .1s ease;
+}
+.rack-dev:hover { filter: brightness(1.25); }
+.rack-dev.sel { outline: 2px solid var(--accent); outline-offset: -1px; z-index: 2; }
+.rack-dev-top {
+  display: flex; align-items: center; gap: 5px;
+  white-space: nowrap; overflow: hidden;
+}
+.rack-dev-name { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.rack-badge {
+  margin-left: auto; font-size: 9px; line-height: 1;
+  background: rgba(56,189,248,.2); color: var(--accent);
+  border-radius: 6px; padding: 1px 5px;
+}
+.rack-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* blade-корзина: вложенные слоты */
+.rack-chassis {
+  flex: 1; display: flex; flex-direction: column; gap: 1px;
+  margin-top: 2px; min-height: 0;
+}
+.rack-blade { flex: 1 1 0; border-radius: 2px; border: 1px solid rgba(255,255,255,.05); min-height: 4px; }
+.rack-blade:hover { filter: brightness(1.3); }
+.rack-blade.sel { outline: 1px solid var(--accent); }
+.rack-rear {
+  flex: 0 0 auto; height: 4px; border-radius: 2px;
+  border: 1px solid rgba(255,255,255,.06);
+}
+.rack-rear:hover { filter: brightness(1.3); }
+
+.rack-detail { margin-top: var(--sp-4); max-width: 640px; }

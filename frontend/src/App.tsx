@@ -1,11 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { HashRouter, Link, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
+import { HashRouter, Link, Navigate, NavLink, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { api, getToken, setToken } from "./api";
+import type { SiteMeta } from "./types";
+import PhpIPAMShell from "./components/PhpIPAMShell";
 import SearchBox from "./components/SearchBox";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import ScannerLogs from "./pages/ScannerLogs";
 import Settings from "./pages/Settings";
+import MySettings from "./pages/MySettings";
+import Racks from "./pages/Racks";
 import Subnets from "./pages/Subnets";
 import SubnetDetail from "./pages/SubnetDetail";
 import Vlans from "./pages/Vlans";
@@ -15,17 +19,10 @@ import Docs from "./pages/Docs";
 import SearchPage from "./pages/SearchPage";
 import { setTzOffset } from "./util";
 
-export interface SiteMeta {
-  tz_offset_min: number;
-  ui_logo: string;
-  copyright: string;
-  admin_email: string;
-  ui_links: { title: string; url: string; new_window: boolean }[];
-  search_mode: "page" | "live";
-  org_name: string;
-}
-
-const defaultMeta: SiteMeta = { tz_offset_min: 0, ui_logo: "", copyright: "", admin_email: "", ui_links: [], search_mode: "page", org_name: "" };
+const defaultMeta: SiteMeta = {
+  tz_offset_min: 0, ui_logo: "", copyright: "", admin_email: "",
+  ui_links: [], search_mode: "page", org_name: "", show_no_dns: true, ui_layout: "ipam",
+};
 
 function barColor(pct: number): string {
   return pct >= 90 ? "#ef4444" : pct >= 70 ? "#f59e0b" : "#38bdf8";
@@ -53,6 +50,19 @@ function Layout({ meta, onLogout, onMetaChanged }: { meta: SiteMeta; onLogout: (
     if (!getToken()) return;
     api<any>("/auth/me").then(setMe).catch(() => setMe(null));
   }, []);
+  // личный выбор внешнего вида пользователя («Мои настройки»); "" = по глобальной
+  // настройке администратора. Перечитываем при каждой смене маршрута, чтобы выбор
+  // применялся сразу после сохранения.
+  const loc = useLocation();
+  const [myLayout, setMyLayout] = useState<"" | "ipam" | "phpipam">("");
+  useEffect(() => {
+    if (!getToken()) return;
+    let alive = true;
+    api<{ ui_layout: "" | "ipam" | "phpipam" }>("/me/prefs")
+      .then((p) => { if (alive) setMyLayout(p?.ui_layout || ""); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [loc.pathname]);
   // служебная информация (хост, docker) — только администраторам
   const role0 = me?.role || "";
   useEffect(() => {
@@ -71,6 +81,14 @@ function Layout({ meta, onLogout, onMetaChanged }: { meta: SiteMeta; onLogout: (
   if (!getToken()) return <Navigate to="/login" replace />;
   const role = me?.role || "";
 
+  // внешний вид: личный выбор пользователя («Мои настройки») важнее глобального
+  const effectiveLayout = myLayout || meta.ui_layout || "ipam";
+  // «Классический» вид (phpipam): горизонтальное меню сверху, VLAN и сети деревом слева.
+  // «Новый» (ipam) — меню слева, ниже.
+  if (effectiveLayout === "phpipam") {
+    return <PhpIPAMShell meta={meta} role={role} me={me} sysInfo={sysInfo} onLogout={onLogout} />;
+  }
+
   return (
     <div className={"layout" + (collapsed ? " collapsed" : "")}>
       <aside className="sidebar">
@@ -86,9 +104,11 @@ function Layout({ meta, onLogout, onMetaChanged }: { meta: SiteMeta; onLogout: (
           <NavLink to="/" end>Обзор</NavLink>
           <NavLink to="/subnets">Сети</NavLink>
           <NavLink to="/vlans">VLAN</NavLink>
+          <NavLink to="/racks">Стойки</NavLink>
           <NavLink to="/links">Линии связи</NavLink>
           <NavLink to="/locations" className="nav-sub">Местоположения</NavLink>
           <NavLink to="/docs">Документация</NavLink>
+          <NavLink to="/profile">Мои настройки</NavLink>
           {role === "admin" && <NavLink to="/settings">Настройки</NavLink>}
           {role === "admin" && <NavLink to="/scanner-logs">Скан-логи</NavLink>}
         </nav>
@@ -220,11 +240,13 @@ export default function App() {
           <Route path="subnets/:id" element={<SubnetDetail />} />
           <Route path="scanner-logs" element={<AdminOnly><ScannerLogs /></AdminOnly>} />
           <Route path="vlans" element={<Vlans />} />
+          <Route path="racks" element={<Racks />} />
           <Route path="locations" element={<Locations />} />
           <Route path="links" element={<Links />} />
           <Route path="docs" element={<Docs />} />
           <Route path="search" element={<SearchPage />} />
-          <Route path="settings" element={<Settings onMetaChanged={loadMeta} />} />
+          <Route path="profile" element={<MySettings />} />
+          <Route path="settings" element={<AdminOnly><Settings onMetaChanged={loadMeta} /></AdminOnly>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

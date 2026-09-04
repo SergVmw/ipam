@@ -15,7 +15,7 @@ from .db import init_db
 # Метка сборки: должна печататься в логах при старте (проверка, что образ свежий)
 BUILD = "2026-08-24 docs"
 
-from .routers import admin, agents, auth_router, docs, events, ips, links, locations, overview, phpipam, settings_router, subnets, system, usage, users, vlans
+from .routers import admin, agents, auth_router, docs, events, ips, links, locations, overview, phpipam, profile, racks, settings_router, subnets, system, usage, users, vlans
 from .scanner.scheduler import start_scheduler, stop_scheduler
 from .seed import seed_admin, seed_demo
 
@@ -50,6 +50,8 @@ app = FastAPI(title="IPAM-lite", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 app.include_router(auth_router.router)
+app.include_router(profile.router)
+app.include_router(racks.router)
 app.include_router(vlans.router)
 app.include_router(locations.router)
 app.include_router(links.router)

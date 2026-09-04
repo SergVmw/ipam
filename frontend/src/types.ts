@@ -235,6 +235,34 @@ export interface UiLink {
   new_window: boolean;
 }
 
+// личные настройки пользователя (эндпоинт /api/me/prefs)
+export interface MyPrefs {
+  username: string;
+  role: string;                 // admin | operator | viewer
+  provider: "local" | "ldap";
+  display_name: string | null;
+  side_mode: "vlan" | "subnets"; // левая колонка «классического» вида по умолчанию
+  email: string;
+  email_suggested: string | null; // почта «из домена», если своя не задана
+  ui_layout: "ipam" | "phpipam" | "";      // личный выбор внешнего вида; "" = как у администратора
+  ui_layout_global: "ipam" | "phpipam";    // глобальная настройка (администратор)
+  ui_layout_effective: "ipam" | "phpipam"; // что реально применено (личное или глобальное)
+}
+
+// публичные настройки внешнего вида для клиента (эндпоинт /meta)
+export interface SiteMeta {
+  tz_offset_min: number;
+  ui_logo: string;
+  copyright: string;
+  admin_email: string;
+  ui_links: UiLink[];
+  show_no_dns: boolean;
+  search_mode: "page" | "live";
+  org_name: string;
+  ui_layout: "ipam" | "phpipam";  // внешний вид интерфейса
+  rack_topology_enabled?: boolean; // настроен ли Rack Topology API (страница «Стойки»)
+}
+
 export interface AppSettings {
   dns_servers: string;
   resolve_dns: boolean;
@@ -249,6 +277,8 @@ export interface AppSettings {
   show_no_dns: boolean;
   search_mode: "page" | "live";
   org_name: string;
+  ui_layout: "ipam" | "phpipam";   // внешний вид: меню слева (ipam) / сверху + список слева (phpipam)
+  rack_topology_url?: string;      // адрес Rack Topology API (страница «Стойки»)
   agent_report_interval_min?: number;
   ldap_enabled: boolean;
   ldap_url: string;

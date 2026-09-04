@@ -140,6 +140,8 @@ class SettingsIn(BaseModel):
     show_no_dns: bool | None = None  # показывать секцию «IP без hostname — внести в DNS»
     search_mode: str | None = Field(default=None, pattern="^(page|live)$")  # поиск: страница / live-панель
     org_name: str | None = Field(default=None, max_length=128)  # название организации (title страницы)
+    ui_layout: str | None = Field(default=None, pattern="^(ipam|phpipam)$")  # внешний вид интерфейса
+    rack_topology_url: str | None = Field(default=None, max_length=500)  # Rack Topology API (адрес источника)
     agent_report_interval_min: int | None = Field(default=None, ge=1, le=1440)  # троттлинг отчётов агентов, минут
     mail_enabled: bool | None = None
     smtp_host: str | None = None
@@ -162,6 +164,13 @@ class UserUpdate(BaseModel):
     username: str | None = Field(default=None, min_length=2, max_length=64)
     password: str | None = Field(default=None, min_length=4, max_length=128)
     role: str | None = None
+
+
+class PrefsIn(BaseModel):
+    """Личные настройки текущего пользователя (GET/PUT /api/me/prefs)."""
+    side_mode: str | None = Field(default=None, pattern="^(vlan|subnets)$")  # левая колонка в «классическом» виде
+    email: str | None = Field(default=None, max_length=255)  # "" = очистить
+    ui_layout: str | None = Field(default=None, pattern="^(ipam|phpipam)?$")  # личный внешний вид; "" = по настройке администратора
 
 
 class AgentIn(BaseModel):

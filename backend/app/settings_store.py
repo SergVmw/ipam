@@ -37,6 +37,8 @@ KEYS = {
     "show_no_dns": bool,
     "search_mode": str,
     "org_name": str,
+    "rack_topology_url": str,  # адрес Rack Topology API (сторонний сервис)
+    "ui_layout": str,      # внешний вид: ipam (меню слева) | phpipam (меню сверху + список сетей слева)
     "agent_report_interval_min": int,
 }
 
@@ -73,6 +75,9 @@ def defaults() -> dict:
         "show_no_dns": True,
         "search_mode": "page",
         "org_name": "",
+        "ui_layout": "ipam",
+        # адрес Rack Topology API (страница «Стойки»); пусто = выключено
+        "rack_topology_url": env.RACK_TOPOLOGY_URL,
         # глобальный троттлинг отчётов агентов (мин): повторный отчёт не чаще
         # этого интервала; агент забирает его с /api/agent/config
         "agent_report_interval_min": 15,

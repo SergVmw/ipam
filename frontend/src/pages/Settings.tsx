@@ -208,7 +208,26 @@ export default function Settings({ onMetaChanged }: { onMetaChanged?: () => void
       </div>
 
       <div className="card">
+        <div className="card-title">Стойки (Rack Topology API)</div>
+        <div className="kv"><span>Адрес источника</span>
+          <input className="input mono" style={{ maxWidth: 460 }} value={form.rack_topology_url || ""}
+            placeholder="http://admsrv.cotvec.local:8080/api/racks"
+            onChange={(e) => setForm({ ...form, rack_topology_url: e.target.value })} />
+          <span className="muted small">внешний read-only API (канонический URL). Пусто — страница «Стойки» выключена. Сервер опрашивает источник сам (CORS не нужен); ответ кэшируется ~30 с.</span>
+        </div>
+        <div className="btn-row"><button className="btn primary" onClick={save}>Сохранить</button></div>
+      </div>
+
+      <div className="card">
         <div className="card-title">Оформление сайта</div>
+        <div className="kv"><span>Внешний вид</span>
+          <select className="input" style={{ maxWidth: 420 }} value={form.ui_layout || "ipam"}
+            onChange={(e) => setForm({ ...form, ui_layout: e.target.value as "ipam" | "phpipam" })}>
+            <option value="ipam">новый — меню слева</option>
+            <option value="phpipam">классический — меню сверху, VLAN и сети списком слева</option>
+          </select>
+          <span className="muted small">меняется сразу после «Сохранить» для всех пользователей</span>
+        </div>
         <div className="kv"><span>Логотип</span>
           {form.ui_logo && <img className="logo-preview" src={form.ui_logo} alt="logo" />}
           <input type="file" accept="image/*" onChange={(e) => onLogoFile(e.target.files?.[0] ?? null)} />

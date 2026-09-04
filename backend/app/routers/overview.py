@@ -32,6 +32,8 @@ async def meta(db: AsyncSession = Depends(get_db)):
         "show_no_dns": bool(d.get("show_no_dns", True)),
         "search_mode": d.get("search_mode") or "page",
         "org_name": d.get("org_name") or "",
+        "ui_layout": d.get("ui_layout") or "ipam",
+        "rack_topology_enabled": bool((d.get("rack_topology_url") or "").strip()),
     }
 
 

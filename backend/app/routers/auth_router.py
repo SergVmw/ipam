@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..ldap_auth import ldap_auth
-from ..models import User, utcnow
+from ..models import User, UserPref, utcnow
 from ..schemas import LoginIn
 from ..security import create_token, get_current_user, verify_password
 from ..settings_store import get_all
@@ -46,6 +46,16 @@ async def login(data: LoginIn, db: AsyncSession = Depends(get_db)):
         dn = (info or {}).get("display_name")
         if dn and user.display_name != dn:
             user.display_name = dn
+        # почта из AD: если у пользователя ещё не задана — сохраняем автоматически
+        mail = (info or {}).get("mail")
+        if mail:
+            pref = (await db.execute(
+                select(UserPref).where(UserPref.user_id == user.id, UserPref.key == "email")
+            )).scalar_one_or_none()
+            if pref is None:
+                db.add(UserPref(user_id=user.id, key="email", value=str(mail)))
+            elif not (pref.value or "").strip():
+                pref.value = str(mail)
     await db.commit()
     await db.refresh(user)
     return {"token": create_token(user), "username": user.username,

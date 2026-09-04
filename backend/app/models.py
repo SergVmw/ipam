@@ -147,6 +147,19 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class UserPref(Base):
+    """Личные настройки пользователя (key/value): внешний вид, почта и т.п.
+
+    Отдельная таблица, чтобы не делать ALTER существующих БД — create_all
+    просто добавит её на пустом/старом хранилище.
+    """
+    __tablename__ = "user_pref"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+
+
 class Agent(Base):
     """L2-агент: маленький скрипт на машине в VLAN, по cron шлёт отчёт живых хостов в ядро."""
     __tablename__ = "agent"
