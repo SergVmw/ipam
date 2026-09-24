@@ -571,7 +571,7 @@ function UserModal({ user, onClose, onSaved, onErr }: {
 
   const clearDb = async () => {
     if (!window.confirm(
-      "Очистить базу данных?\n\nБудут удалены ВСЕ данные: сети, IP, VLAN, агенты, документы, сканы, события.\nПользователи и настройки сохранятся.\nДействие необратимо."
+      "Очистить базу данных?\n\nБудут удалены: сети, IP, VLAN, агенты, сканы, события.\nСохранятся: пользователи, настройки и ВСЯ документация (разделы, статьи, файлы).\nДействие необратимо."
     )) return;
     try {
       await api("/admin/clear-db", { method: "POST" });
@@ -897,8 +897,12 @@ function AgentModal({ agent, subnets, onClose, onSaved, onErr }: {
 interface PhpIPAMReport {
   vlans_new: number; vlans_existing: number; vlans_dup_skip?: number;
   subnets_new: number; subnets_update: number; subnets_skip: number; subnets_overlap_skip?: number;
+  subnets_relink?: number;
   ips_new: number; ips_update: number; ips_skip: number; ips_unused_skip?: number;
   issues: string[];
+  // прозрачность маппинга VLAN: по записи phpIPAM — решение, по сети — привязка
+  vlans_report?: { phpipam: string; action: string; our: string }[];
+  vlan_links?: { cidr: string; phpipam_vlan: string; our_vlan: string }[];
 }
 
 function PhpIPAMCard() {
@@ -907,13 +911,14 @@ function PhpIPAMCard() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [importIps, setImportIps] = useState(false);
+  const [relinkVlans, setRelinkVlans] = useState(false);
   const [insecure, setInsecure] = useState(false);
   const [busy, setBusy] = useState<"" | "check" | "preview" | "apply">("");
   const [checkRes, setCheckRes] = useState<any>(null);
   const [report, setReport] = useState<PhpIPAMReport | null>(null);
   const [err, setErr] = useState("");
 
-  const payload = () => JSON.stringify({ base_url: base, app, username, password, import_ips: importIps, insecure });
+  const payload = () => JSON.stringify({ base_url: base, app, username, password, import_ips: importIps, insecure, relink_vlans: relinkVlans });
   const canRun = base.trim() && app.trim() && username.trim() && password.trim();
 
   const run = async (kind: "check" | "preview" | "apply") => {
@@ -934,6 +939,7 @@ function PhpIPAMCard() {
   const rows: [string, keyof PhpIPAMReport | null][] = [
     ["VLAN: новых", "vlans_new"], ["VLAN: уже есть в ядре", "vlans_existing"], ["VLAN: дубликаты в phpIPAM (пропущены)", "vlans_dup_skip"],
     ["Сети: новые", "subnets_new"], ["Сети: обновить (имя/описание)", "subnets_update"], ["Сети: без изменений", "subnets_skip"],
+    ["Сети: перепривязка VLAN (существующие)", "subnets_relink"],
     ["Сети: пересечение с существующей (пропущены)", "subnets_overlap_skip"],
     ["IP: новых", "ips_new"], ["IP: обновить (помечены занятыми/резервом)", "ips_update"], ["IP: без изменений", "ips_skip"],
     ["IP: свободные в phpIPAM (не тронули)", "ips_unused_skip"],
@@ -970,6 +976,12 @@ function PhpIPAMCard() {
           импортировать IP (медленнее: запрос на каждую сеть)
         </label>
       </div>
+      <div className="kv"><span>VLAN существующих</span>
+        <label className="muted small">
+          <input type="checkbox" checked={relinkVlans} onChange={(e) => setRelinkVlans(e.target.checked)} />
+          перепривязать к привязке phpIPAM (по умолчанию не трогаем)
+        </label>
+      </div>
       <div className="kv"><span>SSL</span>
         <label className="muted small">
           <input type="checkbox" checked={insecure} onChange={(e) => setInsecure(e.target.checked)} />
@@ -1000,10 +1012,48 @@ function PhpIPAMCard() {
           <table className="table" style={{ maxWidth: 560 }}>
             <tbody>
               {rows.filter(([, k]) => k !== null && report[k] !== undefined).map(([label, k]) => (
-                <tr key={String(k)}><td>{label}</td><td className="mono">{report[k as keyof PhpIPAMReport]}</td></tr>
+                <tr key={String(k)}><td>{label}</td><td className="mono">{report[k as keyof PhpIPAMReport] as React.ReactNode}</td></tr>
               ))}
             </tbody>
           </table>
+          {!!report.vlans_report?.length && (
+            <div className="muted small" style={{ marginTop: 8 }}>
+              VLAN: phpIPAM → ядро
+              <table className="table" style={{ maxWidth: 760, marginTop: 3 }}>
+                <thead>
+                  <tr><th>в phpIPAM</th><th>решение импорта</th><th>в ядре</th></tr>
+                </thead>
+                <tbody>
+                  {report.vlans_report.map((v, i) => (
+                    <tr key={i}>
+                      <td className="mono">{v.phpipam}</td>
+                      <td>{v.action}</td>
+                      <td className="mono">{v.our}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!!report.vlan_links?.length && (
+            <details className="muted small" style={{ marginTop: 8 }} open={(report.vlan_links?.length ?? 0) <= 15}>
+              <summary>VLAN у сетей ({report.vlan_links?.length})</summary>
+              <table className="table" style={{ maxWidth: 760, marginTop: 3 }}>
+                <thead>
+                  <tr><th>сеть</th><th>VLAN в phpIPAM</th><th>в ядре</th></tr>
+                </thead>
+                <tbody>
+                  {report.vlan_links.map((l, i) => (
+                    <tr key={i}>
+                      <td className="mono">{l.cidr}</td>
+                      <td>{l.phpipam_vlan || "—"}</td>
+                      <td>{l.our_vlan || "без VLAN"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
           {report.issues.length > 0 && (
             <div className="muted small" style={{ marginTop: 6 }}>
               замечания:

@@ -18,6 +18,7 @@ export interface Subnet {
   gateway: string | null;
   dhcp_start: string | null;
   dhcp_end: string | null;
+  sparse?: boolean; // разреженная сеть (шире /20): строки только у занятых, free — вычисляется
   scan_enabled: boolean;
   scan_interval_s: number | null;
   scan_method: string | null;
@@ -184,8 +185,9 @@ export interface DnsServerStat {
   empty: number;       // ответил, но записи нет (NXDOMAIN / NOERROR без ответа)
   refused: number;     // ответил REFUSED
   servfail: number;    // ответил SERVFAIL
-  timeouts: number;    // НЕ ответил за отведённое время
+  timeouts: number;    // НЕ ответил за отведённое время (по каждой попытке)
   errors: number;      // прочие ошибки (сеть и т.п.)
+  retries: number;     // повторные попытки после таймаута/сетевой ошибки
   rtt_avg_ms: number | null;
 }
 

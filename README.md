@@ -34,6 +34,8 @@ DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/ipam" ./run.sh
 
 Сканеры берутся из системы: `sudo apt install fping nmap` (fping — быстрый ICMP,
 nmap — даёт MAC-адреса на локальном L2-сегменте). Без них — TCP-проба + предупреждение.
+`libmagic1` (опционально, `sudo apt install libmagic1`) — точное определение типа
+файлов в Документации; без него проверка загрузок идёт по сигнатурам.
 
 ## Вход в систему и домен (AD/LDAP)
 
@@ -205,3 +207,16 @@ frontend/src/
 скан (fping/nmap/tcp, метод на сеть), MAC + vendor, агенты с удалённой установкой
 по SSH, вход из домена AD/LDAP, настройки (DNS, скорость, почта, часовой пояс,
 логотип, копирайт), HTTPS с самоподписанным сертификатом.
+
+## Пересборка и вложения Документации
+Прикреплённые файлы хранятся ВНЕ слоя образа: `DOCS_DIR=/docs` (задан в Dockerfile)
++ именованный том (`ipam_docs` / `ipam1_docs` / `ipam2_docs` в compose). Пересборка
+(`docker compose build && up -d`) файлы НЕ трогает. Проверка при старте: в логе строка
+«Документация: N прикреплённых файлов, все на месте (DOCS_DIR=/docs)»; если том не
+примонтирован — ERROR со списком недостающих имён.
+Опасные команды (удаляют том): `docker compose down -v`, `docker volume prune`.
+Бэкап: `docker run --rm -v ipam_docs:/d -v $PWD:/b alpine tar czf /b/docs.tgz -C /d .`
+Если в старом контейнере файлы лежали внутри образа (/app/docs_files) — спасите их до
+удаления контейнера: `docker cp <старый_контейнер>:/app/docs_files ./docs_backup`,
+затем `docker cp ./docs_backup/. <новый_контейнер>:/docs/` (entrypoint также сам
+копирует /app/docs_files -> $DOCS_DIR при старте, если каталог ещё виден).

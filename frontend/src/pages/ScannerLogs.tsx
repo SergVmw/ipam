@@ -47,6 +47,7 @@ function DnsServerRow({ s }: { s: DnsServerStat }) {
         </>}
         {s.timeouts > 0 && <> · таймауты: {s.timeouts}</>}
         {s.errors > 0 && <> · ошибки: {s.errors}</>}
+        {s.retries > 0 && <> · повторы: {s.retries}</>}
         {s.rtt_avg_ms != null && <> · RTT ср.: {s.rtt_avg_ms} мс</>}
       </div>
     </div>

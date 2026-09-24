@@ -8,7 +8,7 @@ from ..db import get_db
 from ..models import Ip, Subnet, Vlan
 from ..security import get_current_user
 from ..settings_store import get_all
-from ..service import ZEROS, cond_free_by_subnet, finish_subnet_counts, last_scans, subnet_dict
+from ..service import cond_free_by_subnet, finish_subnet_counts, last_scans, subnet_dict
 
 router = APIRouter(prefix="/api", tags=["overview"])
 
@@ -80,15 +80,17 @@ async def overview(db: AsyncSession = Depends(get_db), user=Depends(get_current_
         if st in c:
             c[st] = n
     # единое правило: занято = used + reserved; offline < 3 дн. — «усл. осв.»
+    # разреженные сети: total/free из ёмкости CIDR (строки только у занятых)
     cond_by = await cond_free_by_subnet(db)
-    for sid_, c in counts_by.items():
-        c["cond_free"] = cond_by.get(sid_, 0)
-        finish_subnet_counts(c)
+    for s in subnets:
+        c = counts_by.setdefault(s.id, {"free": 0, "used": 0, "reserved": 0, "offline": 0, "cond_free": 0})
+        c["cond_free"] = cond_by.get(s.id, 0)
+        finish_subnet_counts(c, s)
     vlan_map = {v.id: v for v in vlans}
     scans = await last_scans(db, [s.id for s in subnets])
     by_vlan: dict[int | None, list] = {}
     for s in subnets:
-        d = subnet_dict(s, counts_by.get(s.id, dict(ZEROS)), vlan_map.get(s.vlan_id))
+        d = subnet_dict(s, counts_by[s.id], vlan_map.get(s.vlan_id))
         d.update(scans.get(s.id, {"last_scan_at": None, "last_error": None}))
         by_vlan.setdefault(s.vlan_id, []).append(d)
     totals = {"subnets": len(subnets), "ips": 0, "used": 0, "pct": 0.0}

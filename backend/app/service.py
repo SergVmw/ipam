@@ -1,13 +1,71 @@
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from ipaddress import ip_address, ip_network
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .config import settings
 from .models import AuditLog, Ip, ScanRun, Subnet, User, utcnow
 
 ZEROS = {"free": 0, "used": 0, "reserved": 0, "offline": 0, "cond_free": 0, "total": 0, "occupied": 0, "pct": 0.0}
+
+# --- Сериализация создания сетей (анти-race при проверке пересечения CIDR) ---
+# Проверка пересечения и вставка — одна атомарная секция, иначе два конкурентных
+# запроса могут оба пройти check_overlap и создать пересекающиеся сети.
+# PostgreSQL exclusion constraint (gist, cidr WITH &&) НЕ подходит: вложение
+# подсетей в master-сети разрешено (как в phpIPAM), а && запретило бы и его.
+_subnet_lock = asyncio.Lock()
+_SUBNET_LOCK_KEY = 0x53424E54  # произвольная константа pg_advisory lock для «subnet»
+
+
+@asynccontextmanager
+async def subnet_write_lock(db: AsyncSession):
+    """Критическая секция «проверка пересечения + вставка» подсети.
+
+    * asyncio.Lock — от гонок внутри одного процесса (uvicorn worker);
+    * pg_advisory_xact_lock — от гонок между воркерами/процессами на
+      PostgreSQL (снимается на commit/rollback транзакции).
+    Для SQLite межпроцессная защита — блокировка записи самого SQLite.
+    """
+    async with _subnet_lock:
+        if settings.DATABASE_URL.startswith("postgresql"):
+            await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _SUBNET_LOCK_KEY})
+        yield
+
+
+# --- Разреженный режим крупных сетей ---
+# Сети шире /20 НЕ материализуются построчно (для /16 это 65 534 строки, для /8 —
+# 16 млн). Хранятся только реально известные адреса (used/reserved, шлюз, живые
+# после скана); «свободно» вычисляется динамически: ёмкость − used − reserved.
+SPARSE_MIN_PREFIX = 20
+
+
+def is_sparse(cidr: str) -> bool:
+    """True — сеть шире /20: только разреженные строки вместо полной таблицы IP."""
+    try:
+        return ip_network(cidr).prefixlen < SPARSE_MIN_PREFIX
+    except ValueError:
+        return False
+
+
+def host_bounds(net) -> tuple[int, int]:
+    """(lo, hi) диапазон хостовых адресов сети как int — то, что даёт net.hosts().
+
+    Для /31 и /32 возвращаются все адреса (как hosts()), без построения списков —
+    безопасно даже для /8."""
+    lo, hi = int(net.network_address), int(net.broadcast_address)
+    if net.prefixlen <= 30:
+        return lo + 1, hi - 1
+    return lo, hi
+
+
+def subnet_capacity(cidr: str) -> int:
+    """Число хостовых адресов сети (сколько материализовала бы полная таблица)."""
+    lo, hi = host_bounds(ip_network(cidr))
+    return hi - lo + 1
 
 # IP, не отвечающий меньше COND_FREE_DAYS дней, — «условно освобождён»;
 # без ответа ≥ COND_FREE_DAYS дней — отображается как свободный.
@@ -31,7 +89,10 @@ def check_cidr_in_net(cidr: str, ip: str | None) -> str | None:
 
 async def check_overlap(db: AsyncSession, cidr: str) -> None:
     """Запрет: дубли и ЧАСТИЧНЫЕ пересечения.
-    Вложение разрешено (подсеть внутри master-сети и наоборот) — как в phpIPAM."""
+    Вложение разрешено (подсеть внутри master-сети и наоборот) — как в phpIPAM.
+
+    ВАЖНО: вызывать под subnet_write_lock() (проверка+вставка атомарны),
+    иначе при конкурентных запросах возможна гонка."""
     new_net = ip_network(cidr)
     existing = (await db.execute(select(Subnet.cidr))).scalars().all()
     for other in existing:
@@ -55,11 +116,13 @@ async def resync_subnet_ips(db: AsyncSession, subnet_id: int, cidr: str,
     глобально — адрес живёт ровно в одной сети):
     1) строки, «наследованные» от строгих родительских сетей (крупнее, содержат
        эту) — перенести в эту сеть;
-    2) адреса, у которых строки ещё нет (не покрыты подсетями) — материализовать.
+    2) адреса, у которых строки ещё нет (не покрыты подсетями) — материализовать
+       (для плотных сетей ≤ /20; разреженные шире /20 не материализуются —
+       создаётся только строка шлюза, свободные вычисляются динамически).
     Порядок создания не важен: /24→/29 и /29→/24 дают одинаковый результат."""
     from sqlalchemy import insert, update as sa_update
     net = ip_network(cidr)
-    lo, hi = int(net.network_address), int(net.broadcast_address)
+    lo, hi = host_bounds(net)
     parent_ids = []
     for o in (await db.execute(select(Subnet.id, Subnet.cidr))).all():
         if o.id == subnet_id:
@@ -70,17 +133,33 @@ async def resync_subnet_ips(db: AsyncSession, subnet_id: int, cidr: str,
         except ValueError:
             continue
     if parent_ids:
-        # переносим ТОЛЬКО «хосты» этой сети (net.hosts() — ровно те адреса,
-        # что материализует у автономной сети) — тогда вложенная сеть выглядит
-        # так же, как автономная. network/broadcast остаются в родителе.
-        host_ints = [int(a) for a in net.hosts()]
-        for i in range(0, len(host_ints), 5000):
-            chunk = host_ints[i:i + 5000]
-            await db.execute(
-                sa_update(Ip)
-                .where(Ip.subnet_id.in_(parent_ids), Ip.ip_int.in_(chunk))
-                .values(subnet_id=subnet_id)
-            )
+        # переносим ТОЛЬКО «хосты» этой сети (как net.hosts() у автономной сети)
+        # — тогда вложенная сеть выглядит так же, как автономная.
+        # network/broadcast остаются в родителе. По диапазону ip_int —
+        # без построения списков адресов (важно для крупных сетей).
+        await db.execute(
+            sa_update(Ip)
+            .where(Ip.subnet_id.in_(parent_ids), Ip.ip_int >= lo, Ip.ip_int <= hi)
+            .values(subnet_id=subnet_id)
+        )
+    if is_sparse(cidr):
+        # разреженный режим: полную таблицу IP НЕ создаём (для /16 — 65k строк,
+        # для /8 — 16 млн); храним только известные адреса (шлюз)
+        if gateway:
+            has_gw = (await db.execute(select(Ip.id).where(Ip.ip == gateway))).scalar_one_or_none()
+            if has_gw is None:
+                g = int(ip_address(gateway))
+                dh_lo = int(ip_address(dhcp_start)) if dhcp_start else None
+                dh_hi = int(ip_address(dhcp_end)) if dhcp_end else None
+                await db.execute(insert(Ip), [{
+                    "ip": gateway,
+                    "ip_int": g,
+                    "subnet_id": subnet_id,
+                    "state": "free",
+                    "is_gateway": True,
+                    "in_dhcp": bool(dh_lo is not None and dh_hi is not None and dh_lo <= g <= dh_hi),
+                }])
+        return
     existing = set((await db.execute(
         select(Ip.ip_int).where(Ip.ip_int >= lo, Ip.ip_int <= hi)
     )).scalars().all())
@@ -91,7 +170,10 @@ async def resync_subnet_ips(db: AsyncSession, subnet_id: int, cidr: str,
 
 
 def materialize_ips(subnet_id: int, cidr: str, gateway: str | None, dhcp_start: str | None, dhcp_end: str | None) -> list[dict]:
-    """Все адреса сети (кроме network/broadcast) с флагами gateway/dhcp."""
+    """Все адреса сети (кроме network/broadcast) с флагами gateway/dhcp.
+
+    Только для ПЛОТНЫХ сетей (≤ /20, до 4094 строк). Разреженные сети шире /20
+    не материализуются — см. is_sparse()/resync_subnet_ips()."""
     net = ip_network(cidr)
     lo = int(ip_address(dhcp_start)) if dhcp_start else None
     hi = int(ip_address(dhcp_end)) if dhcp_end else None
@@ -109,11 +191,17 @@ def materialize_ips(subnet_id: int, cidr: str, gateway: str | None, dhcp_start: 
     return rows
 
 
-def finish_counts(c: dict) -> dict:
+def finish_counts(c: dict, capacity: int | None = None) -> dict:
     # «свободно» уже включает offline ≥ COND_FREE_DAYS дн. (перенесено из offline в free);
     # cond_free — offline < COND_FREE_DAYS дн. «занято» = used + reserved (offline не в счёт)
+    # capacity задан для разреженной сети: строки есть только у занятых адресов,
+    # «свободно» = ёмкость − used − reserved − cond_free.
     cond = c.get("cond_free", 0)
-    c["total"] = c["free"] + c["used"] + c["reserved"] + cond
+    if capacity is None:
+        c["total"] = c["free"] + c["used"] + c["reserved"] + cond
+    else:
+        c["total"] = capacity
+        c["free"] = max(0, capacity - c["used"] - c["reserved"] - cond)
     c["occupied"] = c["used"] + c["reserved"]
     c["pct"] = round(c["occupied"] / c["total"] * 100, 1) if c["total"] else 0.0
     return c
@@ -135,17 +223,26 @@ async def cond_free_by_subnet(db: AsyncSession, subnet_ids: list[int] | None = N
     return {sid: n for sid, n in (await db.execute(q)).all()}
 
 
-def finish_subnet_counts(c: dict) -> dict:
+def finish_subnet_counts(c: dict, subnet: Subnet | None = None) -> dict:
     """Завершает счётчики сети по единому правилу:
-    «занято» = used + reserved; offline < 3 дн. — cond_free; offline ≥ 3 дн. — free."""
-    c["total"] = c["free"] + c["used"] + c["reserved"] + c["offline"]
-    c["free"] += c["offline"] - c.get("cond_free", 0)
+    «занято» = used + reserved; offline < 3 дн. — cond_free; offline ≥ 3 дн. — free.
+
+    Для разреженной сети (subnet.sparse) строки есть только у занятых адресов —
+    total берётся из ёмкости CIDR, «свободно» = ёмкость − used − reserved − cond_free."""
+    if subnet is not None and subnet.sparse:
+        total = subnet_capacity(subnet.cidr)
+        c["total"] = total
+        c["free"] = max(0, total - c["used"] - c["reserved"] - c.get("cond_free", 0))
+    else:
+        c["total"] = c["free"] + c["used"] + c["reserved"] + c["offline"]
+        c["free"] += c["offline"] - c.get("cond_free", 0)
     c["occupied"] = c["used"] + c["reserved"]
     c["pct"] = round(c["occupied"] / c["total"] * 100, 1) if c["total"] else 0.0
     return c
 
 
-async def usage_counts(db: AsyncSession, subnet_id: int) -> dict:
+async def usage_counts(db: AsyncSession, s: Subnet) -> dict:
+    subnet_id = s.id
     rows = (await db.execute(
         select(Ip.state, func.count()).where(Ip.subnet_id == subnet_id).group_by(Ip.state)
     )).all()
@@ -165,7 +262,8 @@ async def usage_counts(db: AsyncSession, subnet_id: int) -> dict:
     )).scalar() or 0
     c["cond_free"] = cond_free
     c["free"] += c["offline"] - cond_free  # offline ≥ 3 дн. считаем свободными
-    return finish_counts(c)
+    capacity = subnet_capacity(s.cidr) if s.sparse else None
+    return finish_counts(c, capacity=capacity)
 
 
 async def last_scans(db: AsyncSession, subnet_ids: list[int]) -> dict[int, dict]:
@@ -279,6 +377,7 @@ def subnet_dict(s: Subnet, counts: dict, vlan) -> dict:
         "gateway": s.gateway,
         "dhcp_start": s.dhcp_start,
         "dhcp_end": s.dhcp_end,
+        "sparse": s.sparse,
         "scan_enabled": s.scan_enabled,
         "scan_interval_s": s.scan_interval_s,
         "scan_method": s.scan_method,

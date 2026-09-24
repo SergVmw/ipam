@@ -72,6 +72,14 @@ async def migrate_db() -> None:
             if has_tags is None:
                 await conn.execute(text("alter table subnet add column tags varchar(255)"))
                 print("[migrate] subnet.tags добавлена")
+            has_sparse = (await conn.execute(text(
+                "select 1 from information_schema.columns where table_name = 'subnet' and column_name = 'sparse'"
+            ))).scalar()
+            if has_sparse is None:
+                await conn.execute(text(
+                    "alter table subnet add column sparse boolean default false not null"
+                ))
+                print("[migrate] subnet.sparse добавлена (разреженный режим крупных сетей)")
             has_mv = (await conn.execute(text(
                 "select 1 from information_schema.columns where table_name = 'ip' and column_name = 'mac_vendor'"
             ))).scalar()
@@ -164,6 +172,11 @@ async def migrate_db() -> None:
             if "tags" not in scols:
                 await conn.execute(text("alter table subnet add column tags varchar(255)"))
                 print("[migrate] subnet.tags добавлена (sqlite)")
+            if "sparse" not in scols:
+                await conn.execute(text(
+                    "alter table subnet add column sparse boolean default 0 not null"
+                ))
+                print("[migrate] subnet.sparse добавлена (sqlite, разреженный режим крупных сетей)")
             ipcols = [r[1] for r in (await conn.execute(text("pragma table_info(ip)"))).fetchall()]
             if "mac_vendor" not in ipcols:
                 await conn.execute(text("alter table ip add column mac_vendor varchar(64)"))

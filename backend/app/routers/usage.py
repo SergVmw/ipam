@@ -38,4 +38,4 @@ async def usage(sid: int, days: int = 30, db: AsyncSession = Depends(get_db), us
             "reserved": sn.reserved,
             "offline": sn.offline,
         })
-    return {"current": await usage_counts(db, sid), "series": series}
+    return {"current": await usage_counts(db, s), "series": series}

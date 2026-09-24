@@ -1,4 +1,3 @@
-import asyncio
 from datetime import timedelta
 from ipaddress import ip_address, ip_network
 
@@ -12,7 +11,6 @@ from ..schemas import SubnetIn, SubnetUpdate
 from ..scanner.engine import busy_ids, scan_subnet_now, spawn
 from ..security import get_current_user, require_role
 from ..service import (
-    ZEROS,
     agent_reach_by_subnet,
     audit,
     check_cidr_in_net,
@@ -20,10 +18,13 @@ from ..service import (
     cond_free_by_subnet,
     core_reach_from_scan,
     finish_subnet_counts,
+    host_bounds,
     ip_dict,
+    is_sparse,
     last_scans,
     resync_subnet_ips,
     subnet_dict,
+    subnet_write_lock,
     usage_counts,
 )
 
@@ -65,16 +66,18 @@ async def list_subnets(vlan_id: int | None = None, db: AsyncSession = Depends(ge
         if st in c:
             c[st] = n
     # единое правило: занято = used + reserved; offline < 3 дн. — «усл. осв.»
+    # разреженные сети: total/free из ёмкости CIDR (строки только у занятых)
     cond_by = await cond_free_by_subnet(db, [s.id for s in subnets])
-    for sid_, c in counts.items():
-        c["cond_free"] = cond_by.get(sid_, 0)
-        finish_subnet_counts(c)
+    for s in subnets:
+        c = counts.setdefault(s.id, {"free": 0, "used": 0, "reserved": 0, "offline": 0, "cond_free": 0})
+        c["cond_free"] = cond_by.get(s.id, 0)
+        finish_subnet_counts(c, s)
     vlans = await _vlan_map(db)
     scans = await last_scans(db, [s.id for s in subnets])
     agent_reach = await agent_reach_by_subnet(db, [s.id for s in subnets])
     out = []
     for s in subnets:
-        c = counts.get(s.id, dict(ZEROS))
+        c = counts[s.id]
         d = subnet_dict(s, c, vlans.get(s.vlan_id))
         d.update(scans.get(s.id, {"last_scan_at": None, "last_error": None, "last_alive": None}))
         # индикаторы доступности: «Я» — скан из ядра, «А» — отчёты агентов
@@ -86,31 +89,35 @@ async def list_subnets(vlan_id: int | None = None, db: AsyncSession = Depends(ge
 
 @router.post("", status_code=201)
 async def create_subnet(data: SubnetIn, db=Depends(get_db), user=Depends(require_role("admin", "operator"))):
-    await check_overlap(db, data.cidr)
-    if data.vlan_id is not None and not await db.get(Vlan, data.vlan_id):
-        raise HTTPException(422, "VLAN не найден")
-    s = Subnet(
-        name=data.name,
-        cidr=data.cidr,
-        vlan_id=data.vlan_id,
-        gateway=check_cidr_in_net(data.cidr, data.gateway),
-        dhcp_start=check_cidr_in_net(data.cidr, data.dhcp_start),
-        dhcp_end=check_cidr_in_net(data.cidr, data.dhcp_end),
-        scan_enabled=data.scan_enabled,
-        scan_interval_s=data.scan_interval_s,
-        scan_method=(data.scan_method or None),
-        tags=_norm_tags(data.tags),
-        descr=data.descr,
-    )
-    if s.scan_enabled:
-        s.next_scan_at = utcnow() + timedelta(seconds=s.scan_interval_s or 3600)
-    db.add(s)
-    await db.flush()
-    # вложенность разрешена: IP унаследованы от родительской сети переезжают сюда,
-    # адреса, не покрытые подсетями, — материализуются
-    await resync_subnet_ips(db, s.id, s.cidr, s.gateway, s.dhcp_start, s.dhcp_end)
-    audit(db, user, "subnet_create", s.name, {"cidr": s.cidr})
-    await db.commit()
+    # лок сериализует «проверку пересечения + вставку» — иначе при конкурентных
+    # запросах оба могут пройти check_overlap и создать пересекающиеся сети
+    async with subnet_write_lock(db):
+        await check_overlap(db, data.cidr)
+        if data.vlan_id is not None and not await db.get(Vlan, data.vlan_id):
+            raise HTTPException(422, "VLAN не найден")
+        s = Subnet(
+            name=data.name,
+            cidr=data.cidr,
+            sparse=is_sparse(data.cidr),
+            vlan_id=data.vlan_id,
+            gateway=check_cidr_in_net(data.cidr, data.gateway),
+            dhcp_start=check_cidr_in_net(data.cidr, data.dhcp_start),
+            dhcp_end=check_cidr_in_net(data.cidr, data.dhcp_end),
+            scan_enabled=data.scan_enabled,
+            scan_interval_s=data.scan_interval_s,
+            scan_method=(data.scan_method or None),
+            tags=_norm_tags(data.tags),
+            descr=data.descr,
+        )
+        if s.scan_enabled:
+            s.next_scan_at = utcnow() + timedelta(seconds=s.scan_interval_s or 3600)
+        db.add(s)
+        await db.flush()
+        # вложенность разрешена: IP унаследованы от родительской сети переезжают сюда,
+        # адреса, не покрытые подсетями, — материализуются (разреженная сеть — только шлюз)
+        await resync_subnet_ips(db, s.id, s.cidr, s.gateway, s.dhcp_start, s.dhcp_end)
+        audit(db, user, "subnet_create", s.name, {"cidr": s.cidr, "sparse": s.sparse})
+        await db.commit()
     await db.refresh(s)
     return {"id": s.id}
 
@@ -120,7 +127,7 @@ async def get_subnet(sid: int, db: AsyncSession = Depends(get_db), user=Depends(
     s = await db.get(Subnet, sid)
     if not s:
         raise HTTPException(404, "Сеть не найдена")
-    counts = await usage_counts(db, sid)
+    counts = await usage_counts(db, s)
     vlans = await _vlan_map(db)
     d = subnet_dict(s, counts, vlans.get(s.vlan_id))
     scans = await last_scans(db, [sid])
@@ -155,6 +162,12 @@ async def update_subnet(sid: int, data: SubnetUpdate, db=Depends(get_db), user=D
         for r in rows:
             r.is_gateway = r.ip == s.gateway
             r.in_dhcp = bool(lo is not None and hi is not None and lo <= r.ip_int <= hi)
+        # разреженная сеть: у шлюза может не быть строки — создаём
+        if s.sparse and s.gateway and all(r.ip != s.gateway for r in rows):
+            g = int(ip_address(s.gateway))
+            db.add(Ip(ip=s.gateway, ip_int=g, subnet_id=sid, state="free",
+                      is_gateway=True,
+                      in_dhcp=bool(lo is not None and hi is not None and lo <= g <= hi)))
         changes["gateway/dhcp"] = {"gateway": s.gateway, "dhcp": [s.dhcp_start, s.dhcp_end]}
     if data.scan_enabled is not None:
         s.scan_enabled = data.scan_enabled
@@ -282,24 +295,49 @@ async def blocks(sid: int, db: AsyncSession = Depends(get_db), user=Depends(get_
     from collections import defaultdict
 
     net = ip_network(s.cidr)
-    block_bits = min(24, net.prefixlen)
-    mask = (~((1 << (32 - block_bits)) - 1)) & 0xFFFFFFFF
+    # блоки /24 (для сетей мельче /24 — сама сеть); min() здесь давал бы
+    # один блок на всю крупную сеть
+    block_bits = max(24, net.prefixlen)
+    block_size = 1 << (32 - block_bits)
+    mask = (~(block_size - 1)) & 0xFFFFFFFF
     agg: dict[int, dict] = defaultdict(lambda: {"free": 0, "used": 0, "reserved": 0, "offline": 0})
     for ip_int, st in (await db.execute(select(Ip.ip_int, Ip.state).where(Ip.subnet_id == sid))).all():
         if st in agg[ip_int & mask]:
             agg[ip_int & mask][st] += 1
     out = []
-    for base in sorted(agg):
-        c = agg[base]
-        total = sum(c.values())
-        # единое правило: занято = used + reserved, offline — не в заполняемость
-        out.append({
-            "cidr": str(ip_network(base, block_bits)),
-            "free": c["free"] + c["offline"],
-            "used": c["used"],
-            "reserved": c["reserved"],
-            "offline": c["offline"],
-            "total": total,
-            "pct": round((c["used"] + c["reserved"]) / total * 100, 1) if total else 0.0,
-        })
+    if s.sparse:
+        # разреженная сеть: строки только у занятых; free = ёмкость блока − used − reserved
+        lo, hi = host_bounds(net)
+        base = int(net.network_address)
+        end = int(net.broadcast_address)
+        while base <= end:
+            c = agg.get(base, {"free": 0, "used": 0, "reserved": 0, "offline": 0})
+            blo, bhi = max(base, lo), min(base + block_size - 1, hi)
+            total = bhi - blo + 1 if bhi >= blo else 0
+            used, reserved = c["used"], c["reserved"]
+            free = max(0, total - used - reserved)
+            out.append({
+                "cidr": str(ip_network((base, block_bits))),
+                "free": free,
+                "used": used,
+                "reserved": reserved,
+                "offline": c["offline"],
+                "total": total,
+                "pct": round((used + reserved) / total * 100, 1) if total else 0.0,
+            })
+            base += block_size
+    else:
+        for base in sorted(agg):
+            c = agg[base]
+            total = sum(c.values())
+            # единое правило: занято = used + reserved, offline — не в заполняемость
+            out.append({
+                "cidr": str(ip_network((base, block_bits))),
+                "free": c["free"] + c["offline"],
+                "used": c["used"],
+                "reserved": c["reserved"],
+                "offline": c["offline"],
+                "total": total,
+                "pct": round((c["used"] + c["reserved"]) / total * 100, 1) if total else 0.0,
+            })
     return out

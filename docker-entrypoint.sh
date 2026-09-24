@@ -8,6 +8,23 @@ set -e
 CERT_DIR="${CERT_DIR:-/certs}"
 DOMAIN="${IPAM_DOMAIN:-ipam.local}"
 SSL_ENABLED="${SSL_ENABLED:-1}"
+DOCS_DIR="${DOCS_DIR:-/docs}"
+
+# --- вложения Документации: каталог должен жить ВНЕ слоя образа ---
+mkdir -p "$DOCS_DIR" 2>/dev/null || true
+case "$DOCS_DIR" in
+  /app|/app/*)
+    echo "[entrypoint] ВНИМАНИЕ: DOCS_DIR=$DOCS_DIR — внутри слоя образа:"
+    echo "[entrypoint] прикреплённые файлы будут ПОТЕРЯНЫ при пересборке контейнера!"
+    echo "[entrypoint] Задайте DOCS_DIR=/docs и смонтируйте том (см. docker-compose.yml)."
+    ;;
+esac
+# спасение: файлы, оставшиеся в старом внутриобразном каталоге /app/docs_files
+if [ -d /app/docs_files ] && [ "$DOCS_DIR" != "/app/docs_files" ] && [ -n "$(ls -A /app/docs_files 2>/dev/null)" ]; then
+  echo "[entrypoint] копирую файлы Документации из старого каталога /app/docs_files -> $DOCS_DIR"
+  cp -an /app/docs_files/. "$DOCS_DIR"/ 2>/dev/null || true
+fi
+echo "[entrypoint] Документация: $DOCS_DIR, файлов: $(ls -A "$DOCS_DIR" 2>/dev/null | wc -l | tr -d ' ')"
 
 if [ "$SSL_ENABLED" = "1" ]; then
     if [ ! -f "$CERT_DIR/ipam.crt" ] || [ ! -f "$CERT_DIR/ipam.key" ]; then

@@ -37,16 +37,17 @@ async def seed_demo() -> None:
         db.add_all([office, servers])
         await db.flush()
 
-        from .service import materialize_ips
+        from .service import is_sparse, materialize_ips
 
         async def mk(name: str, cidr: str, vlan: Vlan, gw: str, dh1: str | None, dh2: str | None, interval: int) -> Subnet:
             s = Subnet(name=name, cidr=cidr, vlan_id=vlan.id, gateway=gw,
                        dhcp_start=dh1, dhcp_end=dh2, scan_enabled=True,
                        scan_interval_s=interval, next_scan_at=utcnow() + timedelta(seconds=60),
-                       descr="Демо-данные")
+                       descr="Демо-данные", sparse=is_sparse(cidr))
             db.add(s)
             await db.flush()
-            await db.execute(insert(Ip), materialize_ips(s.id, cidr, gw, dh1, dh2))
+            if not s.sparse:  # разреженная сеть: полную таблицу IP не материализуем
+                await db.execute(insert(Ip), materialize_ips(s.id, cidr, gw, dh1, dh2))
             return s
 
         s1 = await mk("Office-LAN", "192.168.10.0/24", office, "192.168.10.1", "192.168.10.10", "192.168.10.200", 300)

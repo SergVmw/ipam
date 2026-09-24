@@ -13,7 +13,7 @@ from .config import settings
 from .db import init_db
 
 # Метка сборки: должна печататься в логах при старте (проверка, что образ свежий)
-BUILD = "2026-08-24 docs"
+BUILD = "2026-09-24 docs-volume"
 
 from .routers import admin, agents, auth_router, docs, events, ips, links, locations, overview, phpipam, profile, racks, settings_router, subnets, system, usage, users, vlans
 from .scanner.scheduler import start_scheduler, stop_scheduler
@@ -37,6 +37,19 @@ async def lifespan(_: FastAPI):
     else:
         log.warning("fping не найден — скан идёт TCP-пробой (PROBE_PORTS), только сети до /22")
     await init_db()
+    try:
+        from .routers.docs import _docs_dir, check_docs_integrity
+        total, missing = await check_docs_integrity()
+        if missing:
+            log.error("Документация: НЕТ %d из %d прикреплённых файлов на диске "
+                      "(DOCS_DIR=%s): %s%s — проверьте монтирование тома с вложениями",
+                      len(missing), total, _docs_dir(), ", ".join(missing[:5]),
+                      "…" if len(missing) > 5 else "")
+        else:
+            log.info("Документация: %d прикреплённых файлов, все на месте (DOCS_DIR=%s)",
+                     total, _docs_dir())
+    except Exception as e:  # noqa: BLE001 — старт важнее проверки
+        log.warning("проверка целостности документации не выполнена: %s", e)
     await seed_admin()
     if settings.SEED_DEMO:
         await seed_demo()

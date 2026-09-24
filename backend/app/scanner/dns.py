@@ -13,7 +13,10 @@ DNS-сервер опрашивается отдельно (dns.asyncquery), а 
 Различие, важное для диагностики:
   * «сервер ответил, но записи PTR нет» (NXDOMAIN / NOERROR без ответа) —
     это НЕ «сервер не ответил»; в логе rcode, а не таймаут;
-  * «сервер не ответил» (timeout / сетевая ошибка) — считается отдельно.
+  * «сервер не ответил» (timeout / сетевая ошибка) — считается отдельно,
+    при этом запрос повторяется (retry с экспоненциальной задержкой,
+    см. resolve_ptrs(retries=...)); окончательные ответы (NXDOMAIN /
+    NOERROR без записи / REFUSED / SERVFAIL) НЕ повторяются.
 
 Секция DNS в логе сканера присутствует ВСЕГДА (поле "dns"), чтобы было видно,
 какие серверы настроены и выполнялся ли PTR вообще:
@@ -107,8 +110,9 @@ def _mkstat(host: str, port: int) -> dict:
         "empty": 0,        # ответил, но записи нет: NXDOMAIN / NOERROR без ответа
         "refused": 0,      # ответил REFUSED
         "servfail": 0,     # ответил SERVFAIL
-        "timeouts": 0,     # НЕ ответил за timeout
+        "timeouts": 0,     # НЕ ответил за timeout (по каждой попытке)
         "errors": 0,       # прочие ошибки (сеть и т.п.)
+        "retries": 0,      # повторные попытки после таймаута/ошибки сети
         "rtt_sum_ms": 0.0,
         "rtt_n": 0,
     }
@@ -126,6 +130,7 @@ def _row_dict(st: dict) -> dict:
         "servfail": st["servfail"],
         "timeouts": st["timeouts"],
         "errors": st["errors"],
+        "retries": st["retries"],
         "rtt_avg_ms": round(st["rtt_sum_ms"] / st["rtt_n"], 1) if st["rtt_n"] else None,
     }
 
@@ -151,7 +156,7 @@ def dns_config_stats(servers: list[str] | None, enabled: bool = True) -> dict:
 
 
 async def resolve_ptrs(ips: list[str], servers: list[str] | None = None,
-                       timeout: float = 2.0) -> tuple[dict[str, str], dict]:
+                       timeout: float = 2.0, retries: int = 2) -> tuple[dict[str, str], dict]:
     """PTR-резолв с логированием серверов.
 
     Возвращает (ip -> hostname для найденных, статистика DNS для лога сканера).
@@ -159,6 +164,11 @@ async def resolve_ptrs(ips: list[str], servers: list[str] | None = None,
     servers — список "host[:port]" пользовательских DNS (из Настроек/окружения);
     пусто/None — системный резолвер (как dnspython Resolver(configure=True),
     т.е. nameservers из /etc/resolv.conf).
+
+    retries — сколько ПОВТОРОВ на сервер после таймаута/сетевой ошибки
+    (с экспоненциальной задержкой 0.5с, 1с, …). Окончательные ответы
+    NXDOMAIN / NOERROR без записи / REFUSED / SERVFAIL не повторяются —
+    после них переходим к следующему серверу.
     """
     if not ips:
         # резолвить нечего — но вернём конфигурацию DNS, чтобы секция
@@ -207,39 +217,51 @@ async def resolve_ptrs(ips: list[str], servers: list[str] | None = None,
                 for host, port in configured:
                     key = f"{host}:{port}"
                     st = by_server[key]
-                    st["queries"] += 1
-                    t0 = time.perf_counter()
-                    try:
-                        resp = await dns.asyncquery.udp(q, host, timeout=timeout, port=port)
-                        rtt_ms = (time.perf_counter() - t0) * 1000
-                        st["answered"] += 1
-                        st["rtt_sum_ms"] += rtt_ms
-                        st["rtt_n"] += 1
-                        rcode_text = dns.rcode.to_text(resp.rcode())
-                        name = _ptr_of(resp)
-                        _outcome(ip, st, rcode_text, name, rtt_ms)
-                        if name:
-                            st["ok"] += 1
-                            result[ip] = name
-                            return
-                        if rcode_text == "REFUSED":
-                            st["refused"] += 1
-                        elif rcode_text == "SERVFAIL":
-                            st["servfail"] += 1
-                        else:  # NXDOMAIN / NOERROR без записи — сервер жив, записи нет
-                            st["empty"] += 1
-                        # записи нет на этом сервере — пробуем следующий из списка
-                        continue
-                    except dns.exception.Timeout:
-                        rtt_ms = (time.perf_counter() - t0) * 1000
-                        st["timeouts"] += 1
-                        _outcome(ip, st, None, None, rtt_ms)
-                        continue  # сервер не ответил — следующий
-                    except Exception as e:
-                        rtt_ms = (time.perf_counter() - t0) * 1000
-                        st["errors"] += 1
-                        log.warning("dns: ip=%s сервер=%s ошибка: %s", ip, key, e)
-                        continue
+                    # один (ip, сервер) — до retries+1 попыток: повторяем ТОЛЬКО
+                    # таймауты/сетевые ошибки, с экспоненциальной задержкой
+                    for attempt in range(retries + 1):
+                        st["queries"] += 1
+                        if attempt:
+                            st["retries"] += 1
+                        t0 = time.perf_counter()
+                        try:
+                            resp = await dns.asyncquery.udp(q, host, timeout=timeout, port=port)
+                            rtt_ms = (time.perf_counter() - t0) * 1000
+                            st["answered"] += 1
+                            st["rtt_sum_ms"] += rtt_ms
+                            st["rtt_n"] += 1
+                            rcode_text = dns.rcode.to_text(resp.rcode())
+                            name = _ptr_of(resp)
+                            _outcome(ip, st, rcode_text, name, rtt_ms)
+                            if name:
+                                st["ok"] += 1
+                                result[ip] = name
+                                return
+                            if rcode_text == "REFUSED":
+                                st["refused"] += 1
+                            elif rcode_text == "SERVFAIL":
+                                st["servfail"] += 1
+                            else:  # NXDOMAIN / NOERROR без записи — сервер жив, записи нет
+                                st["empty"] += 1
+                            # окончательный ответ без PTR — без повторов, следующий сервер
+                            break
+                        except dns.exception.Timeout:
+                            rtt_ms = (time.perf_counter() - t0) * 1000
+                            st["timeouts"] += 1
+                            _outcome(ip, st, None, None, rtt_ms)
+                            if attempt < retries:
+                                # экспоненциальная задержка: 0.5с, 1с, …
+                                await asyncio.sleep(0.5 * (2 ** attempt))
+                                continue
+                            break  # сервер не ответил — следующий
+                        except Exception as e:
+                            rtt_ms = (time.perf_counter() - t0) * 1000
+                            st["errors"] += 1
+                            log.warning("dns: ip=%s сервер=%s ошибка: %s", ip, key, e)
+                            if attempt < retries:
+                                await asyncio.sleep(0.5 * (2 ** attempt))
+                                continue
+                            break
                 failed.append(ip)
 
             await asyncio.gather(*(one(ip) for ip in ips))

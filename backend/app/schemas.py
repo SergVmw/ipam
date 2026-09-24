@@ -78,7 +78,7 @@ class SubnetIn(BaseModel):
         except ValueError:
             raise ValueError("Некорректный CIDR, например 192.168.1.0/24")
         if not (16 <= net.prefixlen <= 32):
-            raise ValueError("Поддерживаются IPv4-сети от /16 до /32 (для больших — разреженный режим, не реализован)")
+            raise ValueError("Поддерживаются IPv4-сети от /16 до /32 (крупные шире /20 сохраняются в разреженном режиме)")
         return str(net)
 
 
@@ -256,3 +256,4 @@ class PhpIPamIn(BaseModel):
     password: str = Field(min_length=1, max_length=200)   # пароль (только для получения токена)
     import_ips: bool = False
     insecure: bool = False  # самоподписанный сертификат phpIPAM — не проверять SSL
+    relink_vlans: bool = False  # приводить vlan_id УЖЕ существующих сетей к привязке phpIPAM

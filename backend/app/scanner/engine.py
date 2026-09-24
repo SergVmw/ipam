@@ -3,12 +3,14 @@ import asyncio
 import json
 import logging
 from datetime import timedelta
+from ipaddress import ip_address
 
 from sqlalchemy import func, select
 
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Ip, IpEvent, ScanRun, Subnet, UsageSnapshot, utcnow
+from ..service import subnet_capacity
 from ..settings_store import get_all
 from .dns import dns_config_stats, resolve_ptrs
 from .logbuffer import scan_log
@@ -62,6 +64,29 @@ async def scan_subnet_now(subnet_id: int, trigger: str = "manual") -> None:
                 rows = {r.ip: r for r in (await db.execute(
                     select(Ip).where(Ip.subnet_id == subnet_id)
                 )).scalars()}
+
+                # Разреженная сеть: у свободных адресов строк нет — создаём строки
+                # для найденных живыми (state="free", дальше цикл переведёт в used).
+                # Адреса, уже учтённые в другой (вложенной) сети, не трогаем: Ip.ip
+                # уникален глобально, адрес живёт ровно в одной сети.
+                missing = [ip for ip in alive if ip not in rows]
+                if missing:
+                    taken = set((await db.execute(
+                        select(Ip.ip).where(Ip.ip.in_(missing))
+                    )).scalars())
+                    dh_lo = int(ip_address(subnet.dhcp_start)) if subnet.dhcp_start else None
+                    dh_hi = int(ip_address(subnet.dhcp_end)) if subnet.dhcp_end else None
+                    for ip_str in missing:
+                        if ip_str in taken:
+                            continue
+                        a = int(ip_address(ip_str))
+                        row = Ip(
+                            ip=ip_str, ip_int=a, subnet_id=subnet_id, state="free",
+                            is_gateway=(ip_str == subnet.gateway),
+                            in_dhcp=bool(dh_lo is not None and dh_hi is not None and dh_lo <= a <= dh_hi),
+                        )
+                        db.add(row)
+                        rows[ip_str] = row
 
                 new_ips = freed_ips = 0
                 new_list: list[str] = []
@@ -149,7 +174,9 @@ async def scan_subnet_now(subnet_id: int, trigger: str = "manual") -> None:
                 for s_, n in st:
                     if s_ in c:
                         c[s_] = n
-                db.add(UsageSnapshot(subnet_id=subnet_id, at=started, total=sum(c.values()), **c))
+                db.add(UsageSnapshot(subnet_id=subnet_id, at=started,
+                                     total=(subnet_capacity(subnet.cidr) if subnet.sparse else sum(c.values())),
+                                     **c))
                 # лог сканера (in-memory, удержание 1 час): анализ работы fping/nmap/TCP-пробы
                 entry: dict = {
                     "at": started.isoformat(),

@@ -63,6 +63,9 @@ class Subnet(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     cidr: Mapped[str] = mapped_column(String(19), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # разреженная сеть (шире /20): полная таблица IP не материализуется,
+    # хранятся только used/reserved/виденные адреса; free — вычисляется
+    sparse: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     vlan_id: Mapped[int | None] = mapped_column(ForeignKey("vlan.id", ondelete="SET NULL"))
     gateway: Mapped[str | None] = mapped_column(String(45))
     dhcp_start: Mapped[str | None] = mapped_column(String(45))
